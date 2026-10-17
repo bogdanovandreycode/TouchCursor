@@ -1,0 +1,177 @@
+package com.example.touchcursor
+
+import android.app.Activity
+import android.app.AlertDialog
+import android.content.ComponentName
+import android.content.Intent
+import android.os.Build
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
+import android.widget.Button
+import android.widget.CheckBox
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.SeekBar
+import android.widget.TextView
+import android.widget.Toast
+import com.example.touchcursor.model.OverlayAction
+import com.example.touchcursor.service.CursorAccessibilityService
+import com.example.touchcursor.settings.SettingsRepository
+import java.util.Locale
+import kotlin.math.roundToInt
+
+class MainActivity : Activity() {
+    private lateinit var repository: SettingsRepository
+    private lateinit var status: TextView
+    private lateinit var content: LinearLayout
+    private val handler = Handler(Looper.getMainLooper())
+    private val statusUpdate = object : Runnable {
+        override fun run() {
+            updateStatus()
+            handler.postDelayed(this, 1000)
+        }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        repository = SettingsRepository(this)
+        render()
+    }
+
+    private fun render() {
+        content = column()
+        val scroll = ScrollView(this).apply { addView(content) }
+        scroll.setOnApplyWindowInsetsListener { view, insets ->
+            if (Build.VERSION.SDK_INT >= 30) {
+                val bars = insets.getInsets(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout())
+                view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            } else {
+                @Suppress("DEPRECATION")
+                view.setPadding(insets.systemWindowInsetLeft, insets.systemWindowInsetTop, insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
+            }
+            insets
+        }
+        setContentView(scroll)
+        text(content, "Touch Cursor", 26f)
+        status = text(content, "", 16f)
+        text(content, "Enable Touch Cursor Service in Android Accessibility settings. It draws controls over apps and sends touch gestures only when you request them. Copy and paste use the focused app's accessibility support. No screen text or clipboard content is stored or transmitted.")
+        button(content, "Open Accessibility settings") {
+            try { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+            catch (_: RuntimeException) { Toast.makeText(this, "Accessibility settings are unavailable", Toast.LENGTH_LONG).show() }
+        }
+        text(content, "Tap the floating arrow button (OFF/ON) to switch modes. Swipe anywhere in the touchpad area to move the arrow. Double-tap to click at its tip. Hold still, then lift to send a long press. Tap the arrow button again for normal touch. System bars remain accessible.")
+        text(content, "Cursor sensitivity", 20f)
+        slider(content, "Sensitivity", ((repository.sensitivity - 0.25f) * 100).roundToInt(), 0, 375,
+            { String.format(Locale.US, "%.2f×", 0.25f + it / 100f) },
+            { repository.sensitivity = 0.25f + it / 100f })
+        text(content, "Floating buttons", 20f)
+        text(content, "Configure each control independently. Positions are percentages of the available travel area, so they adapt to rotation. Controls only move when you change their settings.")
+        for (action in OverlayAction.entries) {
+            button(content, "Configure ${action.title}", action.iconRes) { configureButton(action) }
+        }
+        button(content, "Reset settings to defaults") {
+            AlertDialog.Builder(this).setTitle("Reset settings?")
+                .setMessage("Restore sensitivity and all floating button settings?")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Reset") { _, _ -> repository.reset(); render() }.show()
+        }
+        updateStatus()
+    }
+
+    private fun configureButton(action: OverlayAction) {
+        var config = repository.button(action)
+        val form = column()
+        form.addView(CheckBox(this).apply {
+            text = if (action == OverlayAction.MODE) "Always available" else "Show button"
+            isChecked = config.enabled
+            isEnabled = action != OverlayAction.MODE
+            setOnCheckedChangeListener { _, checked -> config = config.copy(enabled = checked) }
+        })
+        text(form, "Button opacity: 100% is solid; 30% is faint. Applies to the icon, label and background.")
+        slider(form, "Button opacity", (config.opacity * 100).roundToInt(), 30, 100, { "$it%" },
+            { config = config.copy(opacity = it / 100f) })
+        slider(form, "Horizontal position", (config.xNormalized * 100).roundToInt(), 0, 100, { "$it%" },
+            { config = config.copy(xNormalized = it / 100f) })
+        slider(form, "Vertical position", (config.yNormalized * 100).roundToInt(), 0, 100, { "$it%" },
+            { config = config.copy(yNormalized = it / 100f) })
+        slider(form, "Width", config.widthDp, 40, 160, { "$it dp" }, { config = config.copy(widthDp = it) })
+        slider(form, "Height", config.heightDp, 40, 160, { "$it dp" }, { config = config.copy(heightDp = it) })
+        AlertDialog.Builder(this).setTitle(action.title)
+            .setView(ScrollView(this).apply { addView(form) })
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Save") { _, _ ->
+                repository.save(config)
+                Toast.makeText(this, "Button settings saved", Toast.LENGTH_SHORT).show()
+            }.show()
+    }
+
+    private fun slider(parent: LinearLayout, name: String, initial: Int, min: Int, max: Int,
+                       format: (Int) -> String, changed: (Int) -> Unit) {
+        val label = text(parent, "$name: ${format(initial)}")
+        parent.addView(SeekBar(this).apply {
+            this.max = max - min
+            progress = initial - min
+            contentDescription = name
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                    label.text = getString(R.string.setting_value, name, format(progress + min))
+                    if (fromUser) changed(progress + min)
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar) = Unit
+                override fun onStopTrackingTouch(seekBar: SeekBar) = Unit
+            })
+        })
+    }
+
+    private fun updateStatus() {
+        val expected = ComponentName(this, CursorAccessibilityService::class.java)
+        val enabled = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
+            ?.split(':')?.any { ComponentName.unflattenFromString(it) == expected } == true
+        status.text = when {
+            CursorAccessibilityService.running -> "Service: connected"
+            enabled -> "Service: enabled, waiting for Android to connect"
+            else -> "Service: disabled"
+        }
+    }
+
+    private fun column() = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        val padding = (20 * resources.displayMetrics.density).roundToInt()
+        setPadding(padding, padding, padding, padding)
+    }
+
+    private fun text(parent: LinearLayout, value: String, size: Float = 15f): TextView = TextView(this).apply {
+        text = value
+        textSize = size
+        setPadding(0, 12, 0, 12)
+        parent.addView(this)
+    }
+
+    private fun button(parent: LinearLayout, label: String, iconRes: Int? = null, action: () -> Unit) {
+        parent.addView(Button(this).apply {
+            text = label
+            if (iconRes != null) {
+                val size = (22 * resources.displayMetrics.density).roundToInt()
+                val icon = getDrawable(iconRes)?.mutate()?.apply {
+                    setTint(currentTextColor)
+                    setBounds(0, 0, size, size)
+                }
+                setCompoundDrawablesRelative(icon, null, null, null)
+                compoundDrawablePadding = (8 * resources.displayMetrics.density).roundToInt()
+            }
+            setOnClickListener { action() }
+        })
+    }
+
+    override fun onResume() {
+        super.onResume()
+        handler.post(statusUpdate)
+    }
+
+    override fun onPause() {
+        handler.removeCallbacks(statusUpdate)
+        super.onPause()
+    }
+}
