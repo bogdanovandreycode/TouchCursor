@@ -182,7 +182,6 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
     fun recoverWindows() {
         if (destroyed || suspended || excluded || injecting) return
         val missing = !capture.isAttachedToWindow || (cursorMode && !cursor.isAttachedToWindow) ||
-            (cursorMode && !toggle.isAttachedToWindow) ||
             (edgeConfig.enabled && !edgeHandle.isAttachedToWindow) ||
             (controlsExpanded && buttons.any { (action, view) -> settings.button(action).enabled && !view.isAttachedToWindow })
         if (missing) syncWindows()
@@ -203,11 +202,6 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
         }
         toggle.setText(if (cursorMode) R.string.cursor_on_label else R.string.cursor_off_label)
         toggle.contentDescription = service.getString(if (cursorMode) R.string.cursor_on_description else R.string.cursor_off_description)
-        val emergencyExit = cursorMode && !settings.button(OverlayAction.MODE).enabled
-        if (emergencyExit) {
-            toggle.setText(R.string.cursor_exit_label)
-            toggle.setContentDescription(service.getString(R.string.cursor_exit_description))
-        }
         if (!injecting) {
             val captureParams = captureParams(cursorMode)
             if (!put(capture, captureParams)) {
@@ -232,8 +226,7 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
                 settings.button(action).enabled && !attached.containsKey(button) }) remove(toggle)
         for ((action, button) in buttons) {
             val config = settings.button(action)
-            // A hidden activation button must never remove the only on-screen exit.
-            if (injecting || !controlsExpanded || (!config.enabled && !(action == OverlayAction.MODE && emergencyExit))) {
+            if (injecting || !controlsExpanded || !config.enabled) {
                 remove(button)
                 continue
             }

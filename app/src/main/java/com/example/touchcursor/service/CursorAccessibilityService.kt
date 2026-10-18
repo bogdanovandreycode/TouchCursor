@@ -93,6 +93,7 @@ class CursorAccessibilityService : AccessibilityService() {
         foregroundRefresh.run()
         overlays?.show()
         running = true
+        connectedService = this
         registerAccessibilityButton()
         handler.post(screenStateCheck)
         if (!receiverRegistered) {
@@ -135,21 +136,26 @@ class CursorAccessibilityService : AccessibilityService() {
     }
 
     private fun registerAccessibilityButton() {
-        if (Build.VERSION.SDK_INT < 26) return
+        // Android 11+ uses the separate shortcut Activity so removing it cannot revoke service access.
+        if (Build.VERSION.SDK_INT < 26 || Build.VERSION.SDK_INT >= 30) return
         accessibilityButtonCallback?.let { accessibilityButtonController.unregisterAccessibilityButtonCallback(it) }
         accessibilityButtonAvailable = accessibilityButtonController.isAccessibilityButtonAvailable
         accessibilityButtonCallback = object : AccessibilityButtonController.AccessibilityButtonCallback() {
             override fun onClicked(controller: AccessibilityButtonController) {
-                refreshScreenState()
-                // Refresh exclusions before accepting a shortcut during an application transition.
-                foregroundRefresh.run()
-                overlays?.toggleCursorMode()
+                toggleCursorFromShortcut()
             }
 
             override fun onAvailabilityChanged(controller: AccessibilityButtonController, available: Boolean) {
                 accessibilityButtonAvailable = available
             }
         }.also { accessibilityButtonController.registerAccessibilityButtonCallback(it, handler) }
+    }
+
+    private fun toggleCursorFromShortcut() {
+        refreshScreenState()
+        // Refresh exclusions before accepting a shortcut during an application transition.
+        foregroundRefresh.run()
+        overlays?.toggleCursorMode()
     }
 
     private fun scheduleForegroundRefresh(delay: Long = 0) {
@@ -177,6 +183,7 @@ class CursorAccessibilityService : AccessibilityService() {
     }
 
     private fun cleanup() {
+        if (connectedService === this) connectedService = null
         running = false
         accessibilityButtonAvailable = false
         handler.removeCallbacks(screenStateCheck)
@@ -201,6 +208,14 @@ class CursorAccessibilityService : AccessibilityService() {
     }
 
     companion object {
+        private var connectedService: CursorAccessibilityService? = null
+
+        fun toggleFromShortcut(): Boolean {
+            val service = connectedService ?: return false
+            service.toggleCursorFromShortcut()
+            return true
+        }
+
         var running = false
             private set
         var accessibilityButtonAvailable = false

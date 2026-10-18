@@ -105,7 +105,8 @@ class CursorAccessibilityServiceTest {
         assertNotNull(view("MODE"))
     }
 
-    @Test @Config(sdk = [34]) fun nativeAccessibilityButtonTogglesAndRespectsExclusions() {
+    @Test @Config(sdk = [28], shadows = [com.example.touchcursor.testing.AvailableAccessibilityButtonShadow::class])
+    fun legacyAccessibilityButtonTogglesAndRespectsExclusions() {
         connect()
         val button = shadowOf(service.accessibilityButtonController)
         button.performAccessibilityButtonClick(); settle()
@@ -114,6 +115,26 @@ class CursorAccessibilityServiceTest {
         assertNull(view("Cursor"))
         app("game.app"); repository.excludedPackages = setOf("game.app"); settle()
         button.performAccessibilityButtonClick(); settle()
+        assertTrue(windows().isEmpty())
+    }
+
+    @Test @Config(sdk = [34]) fun independentShortcutTogglesHiddenAppButtonAndRespectsExclusions() {
+        connect()
+        repository.save(repository.button(com.example.touchcursor.model.OverlayAction.MODE).copy(enabled = false))
+        settle()
+        assertNull(view("MODE"))
+        assertTrue(CursorAccessibilityService.toggleFromShortcut()); settle()
+        assertNotNull(view("Cursor")); assertNull(view("MODE"))
+        assertTrue(CursorAccessibilityService.toggleFromShortcut()); settle()
+        assertNull(view("Cursor")); assertNull(view("MODE"))
+        app("game.app"); repository.excludedPackages = setOf("game.app"); settle()
+        assertTrue(CursorAccessibilityService.toggleFromShortcut()); settle()
+        assertTrue(windows().isEmpty())
+    }
+
+    @Test fun unboundServiceCannotBeActivatedByShortcut() {
+        connect(); service.onUnbind(Intent())
+        assertFalse(CursorAccessibilityService.toggleFromShortcut())
         assertTrue(windows().isEmpty())
     }
 

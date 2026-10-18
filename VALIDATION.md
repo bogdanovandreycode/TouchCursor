@@ -1,4 +1,25 @@
-# Touch Cursor 0.3.1 validation
+# Touch Cursor 0.3.2 validation
+
+## Independent app/system controls — 2026-10-19
+
+The disabled app mode button now stays hidden in both modes, including periodic overlay recovery. Two-finger exit and the native shortcut remain supported. On Android 11+, the service no longer requests `FLAG_REQUEST_ACCESSIBILITY_BUTTON`: AOSP's [shortcut-managed service settings](https://android.googlesource.com/platform/packages/apps/Settings/+/4230ad4b07fd71060e25df0f7cde141cb1c4c899/src/com/android/settings/accessibility/InvisibleToggleAccessibilityServicePreferenceFragment.java) tie service access to shortcut assignment when that flag is set. The optional **Touch Cursor mode** activity uses the public accessibility shortcut target declaration and finishes without displaying a window. It toggles the connected service with the same screen/exclusion checks as before; it never enables service access. Android 8–10 retains the original service-button metadata/callback. The new activity is disabled before API 30.
+
+| Check | Result |
+| --- | --- |
+| `jacocoDebugUnitTestCoverageVerification lint assembleDebug assembleDebugAndroidTest` | Passed; **155 unit tests**, 0 failures/errors/skips, 0 lint errors and the same 3 existing version-update warnings |
+| Unit coverage | **1148/1248 lines = 92.0%**, **536/745 branches = 71.9%**; the 90%/70% gate passes |
+| Focused native shortcut tests on Android 13/API 33 | **2 passed**; enter/exit with app button hidden, received tap/hold, and removal of the system shortcut while service/app controls remain usable |
+| Full instrumentation on Android 13/API 33 x86_64 | **13 passed**, including actual System UI shortcut input and two-finger exit |
+| Full compatible instrumentation on Android 7/API 24 x86 | **11 passed**; the two API 31+ shortcut tests are filtered out |
+| APK signature/metadata | Verified v2 debug signature; version 0.3.2 (5), minSdk 24, targetSdk 36, no requested permissions |
+
+Reports: `app/build/reports/032-build-validation.log`, `app/build/reports/api33-shortcut-032.txt`, `app/build/reports/api33-instrumentation-032.txt`, `app/build/reports/api24-instrumentation-032.txt`, and the standard unit/coverage/lint reports.
+
+Deliverable: `app/build/outputs/apk/debug/TouchCursor-0.3.2-debug.apk` (972472 bytes). SHA-256: `4413C127A33A166E451E9CB5B12A446F5205E4E61BB4805B3DD8F3EE81A4ED48`. Install over the previous debug build to preserve settings. On Android 11+, keep **Touch Cursor Service** enabled and replace any old service shortcut with **Touch Cursor mode** if a native mode-toggle icon is wanted. Leave the system shortcut unassigned for app controls only. OEM Settings layouts remain device dependent; the user's OnePlus/Android 14 was not modified or physically tested.
+
+---
+
+## 0.3.1 historical validation
 
 ## Unit regression suite — 2026-10-18
 

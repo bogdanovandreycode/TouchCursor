@@ -2,6 +2,7 @@ package com.example.touchcursor.service
 
 import android.accessibilityservice.AccessibilityService
 import android.graphics.Rect
+import android.os.Build
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import com.example.touchcursor.R
@@ -40,7 +41,8 @@ class SystemShortcutTracker(private val service: AccessibilityService) {
 
     private fun findTarget(node: AccessibilityNodeInfo, budget: IntArray): Rect? = try {
         if (--budget[0] < 0) null else {
-            val label = service.getString(R.string.accessibility_service_label)
+            val label = service.getString(if (Build.VERSION.SDK_INT >= 30)
+                R.string.accessibility_shortcut_label else R.string.accessibility_service_label)
             if (node.isVisibleToUser && node.isClickable &&
                 (node.contentDescription?.toString() == label || node.text?.toString() == label)) {
                 Rect().also { node.getBoundsInScreen(it) }.takeUnless { it.isEmpty }

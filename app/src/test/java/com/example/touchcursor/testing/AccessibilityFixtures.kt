@@ -3,6 +3,7 @@
 package com.example.touchcursor.testing
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityButtonController
 import android.accessibilityservice.GestureDescription
 import android.os.Handler
 import android.view.accessibility.AccessibilityEvent
@@ -13,6 +14,13 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Implementation
 import org.robolectric.annotation.Implements
 import org.robolectric.shadows.ShadowAccessibilityService
+import org.robolectric.shadows.ShadowAccessibilityButtonController
+
+@Implements(AccessibilityButtonController::class, minSdk = 26)
+class AvailableAccessibilityButtonShadow : ShadowAccessibilityButtonController() {
+    @Implementation
+    fun isAccessibilityButtonAvailable() = true
+}
 
 class TestAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit

@@ -36,7 +36,7 @@ class CursorIntegrationTest {
     private var previousEnabled = "0"
     private var previousFontScale = "1.0"
     private val component = "com.example.touchcursor/.service.CursorAccessibilityService"
-    private val shortcutComponent = "com.example.touchcursor/com.example.touchcursor.service.CursorAccessibilityService"
+    private val shortcutComponent = "com.example.touchcursor/com.example.touchcursor.CursorShortcutActivity"
 
     @Before fun setup() {
         automation.serviceInfo = automation.serviceInfo.apply {
@@ -227,11 +227,11 @@ class CursorIntegrationTest {
             shell("settings put secure accessibility_button_mode 1")
             settings.save(settings.button(OverlayAction.MODE).copy(enabled = false))
             settings.saveEdgeReveal(EdgeRevealConfig(enabled = true, edge = ScreenEdge.LEFT))
-            await { node("Touch Cursor Service") != null && window("TouchCursor.MODE") == null && window("TouchCursor.Edge") != null }
-            val shortcut = nodeBounds("Touch Cursor Service")
+            await { node("Touch Cursor mode") != null && window("TouchCursor.MODE") == null && window("TouchCursor.Edge") != null }
+            val shortcut = nodeBounds("Touch Cursor mode")
             tap(shortcut.exactCenterX(), shortcut.exactCenterY())
             await { window("TouchCursor.Cursor") != null && window("TouchCursor.Input") != null }
-            assertNotNull(window("TouchCursor.MODE"))
+            assertNull(window("TouchCursor.MODE"))
             clickAndHoldAtTarget()
             tap(shortcut.exactCenterX(), shortcut.exactCenterY())
             await { window("TouchCursor.Cursor") == null && window("TouchCursor.MODE") == null }
@@ -240,13 +240,42 @@ class CursorIntegrationTest {
             await { label() == "Taps: 2; holds: 1" }
             tap(shortcut.exactCenterX(), shortcut.exactCenterY())
             await { window("TouchCursor.Cursor") != null }
+            assertNull(window("TouchCursor.MODE"))
+            settings.save(settings.button(OverlayAction.MODE).copy(enabled = true))
+            await { window("TouchCursor.MODE") != null }
             tapWindow("TouchCursor.MODE")
-            await { window("TouchCursor.Cursor") == null && window("TouchCursor.MODE") == null }
+            await { window("TouchCursor.Cursor") == null }
             settings.excludedPackages = setOf("com.example.touchcursor.test")
             await { noOverlays() }
             tap(shortcut.exactCenterX(), shortcut.exactCenterY())
             SystemClock.sleep(300)
             assertTrue(noOverlays())
+        } finally {
+            shell("settings put secure accessibility_button_targets $previousTargets")
+            shell("settings put secure accessibility_button_mode $previousMode")
+        }
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 31)
+    fun removingSystemShortcutKeepsServiceAndAppControlsWorking() {
+        val previousTargets = shell("settings get secure accessibility_button_targets")
+        val previousMode = shell("settings get secure accessibility_button_mode")
+        try {
+            shell("settings put secure accessibility_button_targets $shortcutComponent")
+            shell("settings put secure accessibility_button_mode 1")
+            await { node("Touch Cursor mode") != null }
+            shell("settings put secure accessibility_button_targets null")
+            await { node("Touch Cursor mode") == null }
+            assertTrue(CursorAccessibilityService.running)
+            assertTrue(shell("settings get secure enabled_accessibility_services").contains("CursorAccessibilityService"))
+            tapWindow("TouchCursor.MODE")
+            await { window("TouchCursor.Cursor") != null }
+            clickAndHoldAtTarget()
+            tapWindow("TouchCursor.MODE")
+            await { window("TouchCursor.Cursor") == null }
+            val target = nodeBounds("fixture-target")
+            tap(target.exactCenterX(), target.exactCenterY())
+            await { label() == "Taps: 2; holds: 1" }
         } finally {
             shell("settings put secure accessibility_button_targets $previousTargets")
             shell("settings put secure accessibility_button_mode $previousMode")

@@ -76,16 +76,18 @@ class MainActivity : Activity() {
             try { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
             catch (_: RuntimeException) { Toast.makeText(this, "Accessibility settings are unavailable", Toast.LENGTH_LONG).show() }
         }
-        text(content, "Tap the floating arrow button (OFF/ON) to switch modes. Swipe anywhere in the touchpad area to move the arrow. Double-tap to click at its tip. Hold still, then lift to send a long press. Tap the mode/EXIT button for normal touch, or touch with two fingers and lift both to exit. System bars remain accessible.")
+        text(content, "Tap the floating arrow button (OFF/ON) to switch modes. Swipe anywhere in the touchpad area to move the arrow. Double-tap to click at its tip. Hold still, then lift to send a long press. Tap the mode button for normal touch, or touch with two fingers and lift both to exit. System bars remain accessible.")
         text(content, "Cursor sensitivity", 20f)
         slider(content, "Sensitivity", ((repository.sensitivity - 0.25f) * 100).roundToInt(), 0, 375,
             { String.format(Locale.US, "%.2f×", 0.25f + it / 100f) },
             { repository.sensitivity = 0.25f + it / 100f })
         button(content, "Configure cursor appearance") { configureCursor() }
         text(content, "System accessibility shortcut", 20f)
-        text(content, if (Build.VERSION.SDK_INT >= 26)
-            "In Android Accessibility settings, assign the accessibility button/shortcut to Touch Cursor Service. It switches cursor mode on and off. You can hide the floating activation button below. A temporary EXIT button remains available during cursor mode for recovery. You can also touch with two fingers and lift both to exit."
-            else "The system accessibility button requires Android 8.0 or newer. Keep the floating Cursor mode button enabled on this device.")
+        text(content, when {
+            Build.VERSION.SDK_INT >= 30 -> "Enable Touch Cursor Service in Android Accessibility settings. For the optional system icon/shortcut, select Touch Cursor mode in Android's accessibility shortcut settings. Removing that shortcut keeps service access enabled. Leave it unassigned to use only the app's floating buttons, or hide Cursor mode below to use only the system shortcut. You can also touch with two fingers and lift both to exit."
+            Build.VERSION.SDK_INT >= 26 -> "In Android Accessibility settings, enable Touch Cursor Service and optionally assign its accessibility button/shortcut. It switches cursor mode on and off. You can hide the app's Cursor mode button below. You can also touch with two fingers and lift both to exit."
+            else -> "The system accessibility button requires Android 8.0 or newer. Keep the floating Cursor mode button enabled on this device."
+        })
         text(content, "Edge swipe controls", 20f)
         text(content, "Optionally hide the buttons behind a small edge handle. Swipe inward to show them; tap the handle or swipe outward to hide them and return to normal touch.")
         button(content, "Configure edge swipe") { configureEdgeSwipe() }
@@ -226,7 +228,7 @@ class MainActivity : Activity() {
             setOnCheckedChangeListener { _, checked -> config = config.copy(enabled = checked) }
         })
         if (action == OverlayAction.MODE) text(form,
-            "Assign the Android accessibility shortcut before hiding this activation button. A temporary EXIT button is shown during cursor mode so normal touch can always be restored. Reopen this app to show the activation button again.")
+            "When disabled, this button stays hidden in both modes. Use the Android accessibility shortcut to enter and exit cursor mode, or touch with two fingers and lift both to exit. Reopen this app to show the button again.")
         text(form, "Button opacity: 100% is solid; 30% is faint. Applies to the icon, label and background.")
         slider(form, "Button opacity", (config.opacity * 100).roundToInt(), 30, 100, { "$it%" },
             { config = config.copy(opacity = it / 100f) })
@@ -272,7 +274,7 @@ class MainActivity : Activity() {
             enabled -> "Service: enabled, waiting for Android to connect"
             else -> "Service: disabled"
         }
-        if (Build.VERSION.SDK_INT >= 26 && CursorAccessibilityService.running) {
+        if (Build.VERSION.SDK_INT in 26..29 && CursorAccessibilityService.running) {
             status.append(if (CursorAccessibilityService.accessibilityButtonAvailable)
                 "\nSystem navigation accessibility button: available" else "\nSystem navigation accessibility button: unavailable; floating shortcuts may still work")
         }

@@ -69,13 +69,17 @@ class OverlayManagerTest {
         assertTrue(flag("Input", WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE))
     }
 
-    @Test fun hiddenActivationButtonStillProvidesAnExitDuringCursorMode() {
+    @Test fun hiddenActivationButtonStaysHiddenInCursorModeAndAfterRecovery() {
         settings.save(settings.button(OverlayAction.MODE).copy(enabled = false))
         settle()
         assertNull(view("MODE"))
         enter()
-        assertEquals("EXIT", (view("MODE") as Button).text.toString())
-        view("MODE")!!.performClick()
+        assertNull(view("MODE"))
+        assertNotNull(view("Cursor"))
+        manager.recoverWindows()
+        settle(2100)
+        assertNull(view("MODE"))
+        manager.toggleCursorMode()
         settle()
         assertNull(view("MODE"))
         assertNull(view("Cursor"))
