@@ -13,7 +13,7 @@ class TextActionController(private val service: AccessibilityService) {
         try {
             if (!editableOnly) accessibility = service.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY)
             listOfNotNull(input, accessibility).any { node ->
-                (!editableOnly || node.isEditable) &&
+                node.refresh() && (!editableOnly || node.isEditable) &&
                     node.actionList.any { it.id == action } && node.performAction(action)
             }
         } finally {

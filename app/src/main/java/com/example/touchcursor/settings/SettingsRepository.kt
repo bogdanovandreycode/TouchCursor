@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.SharedPreferences
 import com.example.touchcursor.model.OverlayAction
 import com.example.touchcursor.model.OverlayButtonConfig
+import com.example.touchcursor.model.EdgeRevealConfig
+import com.example.touchcursor.model.ScreenEdge
 
 class SettingsRepository(context: Context) {
     private val preferences = context.getSharedPreferences("touch_cursor", Context.MODE_PRIVATE)
@@ -11,6 +13,28 @@ class SettingsRepository(context: Context) {
     var sensitivity: Float
         get() = preferences.getFloat("sensitivity", 1.5f).coerceIn(0.25f, 4f)
         set(value) { preferences.edit().putFloat("sensitivity", value.coerceIn(0.25f, 4f)).apply() }
+
+    var excludedPackages: Set<String>
+        get() = preferences.getStringSet("excluded_packages", emptySet())?.toSet() ?: emptySet()
+        set(value) { preferences.edit().putStringSet("excluded_packages", value.toSet()).apply() }
+
+    fun edgeReveal() = EdgeRevealConfig(
+        enabled = preferences.getBoolean("edge.enabled", false),
+        edge = ScreenEdge.entries.firstOrNull { it.name == preferences.getString("edge.side", "RIGHT") } ?: ScreenEdge.RIGHT,
+        position = preferences.getFloat("edge.position", 0.5f).coerceIn(0f, 1f),
+        lengthDp = preferences.getInt("edge.length", 96).coerceIn(48, 240),
+        thicknessDp = preferences.getInt("edge.thickness", 14).coerceIn(8, 32),
+    )
+
+    fun saveEdgeReveal(config: EdgeRevealConfig) {
+        preferences.edit()
+            .putBoolean("edge.enabled", config.enabled)
+            .putString("edge.side", config.edge.name)
+            .putFloat("edge.position", config.position.coerceIn(0f, 1f))
+            .putInt("edge.length", config.lengthDp.coerceIn(48, 240))
+            .putInt("edge.thickness", config.thicknessDp.coerceIn(8, 32))
+            .apply()
+    }
 
     fun button(action: OverlayAction): OverlayButtonConfig {
         val prefix = action.name

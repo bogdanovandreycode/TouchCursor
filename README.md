@@ -19,6 +19,16 @@ The standard Gradle wrapper is included. Android Studio's bundled JDK 21 was use
 5. Tap the **arrow icon / ON** button to return to ordinary touch. System status/navigation bars stay outside the capture area.
 6. In the app, configure sensitivity and each button's visibility, horizontal/vertical position, width, height, and opacity. Each floating control has a native vector icon and a short label. **Button opacity** is independent for each control: 100% is solid and 30% is faint; it affects the icon, label and background together. **Save** applies button changes immediately. COPY, PASTE and KEYS are optional and disabled initially. Position uses normalized travel coordinates; controls do not move by dragging during ordinary use. Reset restores all defaults.
 
+### Edge swipe and excluded apps (0.2.0)
+
+- Open **Configure edge swipe**, enable **Reveal buttons with an edge swipe**, and choose Left, Right, Top or Bottom. Set **Trigger position** (0–100% along that edge), **Trigger length** (48–240 dp) and **Trigger thickness** (8–32 dp), then Save. The existing always-visible controls remain the default until this option is enabled.
+- When enabled, controls initially collapse to a small chevron handle. Swipe inward from the handle to show the enabled buttons at their saved positions. Tap the handle or make a short outward swipe to hide them. Hiding also exits cursor mode. Tapping a collapsed handle does not reveal it accidentally; accessibility activation can still open it.
+- Position is normalized to the available travel area and adapts to rotation. The handle returns collapsed after service restart, screen lock, or leaving an excluded app. Disabling edge swipe restores the always-visible controls.
+- Open **Choose excluded apps**, search by app name or package, select games/other apps, and Save. While a selected app is foreground, all Touch Cursor windows disappear, including the cursor, capture surface and edge handle. On leaving it, controls return in normal touch mode. The service remains enabled so it can detect app changes; the Touch Cursor settings app is always available for recovery.
+- The picker lists launchable apps in the current profile and preserves previously selected package IDs if an app is unavailable. It uses a launcher-intent visibility declaration, not QUERY_ALL_PACKAGES or Usage Access. Exclusions and edge configuration are stored locally alongside existing button settings.
+
+The narrow edge handle consumes touches starting inside its configured strip; gestures outside that strip pass through when the panel is collapsed. System status/navigation bars remain accessible, so top/bottom triggers follow the usable content edge. On Android 10+ the handle requests gesture exclusion only for its own bounds, subject to Android's system-navigation limits and OEM behavior. App exclusions follow accessibility application-window focus; overlays and IME windows do not count as switching apps.
+
 ### Architecture and privacy
 
 - `CursorAccessibilityService` owns the overlay lifecycle, screen-lock receiver and action controllers. `OverlayManager` owns every `TYPE_ACCESSIBILITY_OVERLAY` window. Windows and pending callbacks are cleaned up when the service disconnects or is destroyed.
@@ -26,7 +36,7 @@ The standard Gradle wrapper is included. Android Studio's bundled JDK 21 was use
 - `TouchpadGestureDetector` and `CursorController` are pure Kotlin. Gesture recognition never injects until physical pointer-up. Movement and recognition use Android's configured touch/double-tap slop and timing thresholds.
 - Before injection, all touchable overlay windows are removed synchronously. A frame callback dispatches after removal; `GestureResultCallback` restores the currently requested state on success or cancellation. A generation token rejects stale callbacks, and only one injection can run. A watchdog is only a recovery path for a missing OEM/service callback, not the normal timing mechanism. No sleeping is used to coordinate injection.
 - Local `SharedPreferences` store configuration only. No third-party runtime dependencies, Internet/overlay permissions, text logs, analytics, root, hidden APIs or runtime shell commands are used. JUnit and AndroidX Test dependencies are confined to tests; the integration fixture activity is packaged only in the separate test APK.
-- Accessibility content access is required for focused-node COPY/PASTE. Interactive-window access detects IME visibility, so KEYS can hide a visible keyboard or request its return. Event subscription is limited to the original window/focus/selection event types.
+- Accessibility content access is required for focused-node COPY/PASTE. Interactive-window access detects IME visibility and the foreground application's package for exclusions. Events are limited to window state/set changes, view focus and selection; cursor-window geometry changes are filtered/coalesced when checking the foreground app.
 
 ### Public API limitations
 
@@ -39,7 +49,7 @@ The standard Gradle wrapper is included. Android Studio's bundled JDK 21 was use
 
 ### Validation
 
-Nine local JUnit tests cover cursor bounds/sensitivity and double taps, relative drags, hold-on-release, cancellation, multi-touch rejection and reset behavior. Four integration tests pass on an Android 7.0 / API 24 emulator, including received touch coordinates, copy/paste, IME hiding, layout persistence/rotation and disconnect during injection. Build, lint and runtime results are recorded in [VALIDATION.md](VALIDATION.md).
+Fourteen local JUnit tests cover cursor bounds/sensitivity, touchpad gestures, edge-swipe directions, cancellation, multi-touch rejection and reset behavior. Six integration tests pass on an Android 7.0 / API 24 emulator, including received touch coordinates, copy/paste, IME hiding, layout persistence/rotation, disconnect during injection, all four edge triggers and app exclusions. Build, lint and runtime results are recorded in [VALIDATION.md](VALIDATION.md).
 
 ## 1. Цель
 

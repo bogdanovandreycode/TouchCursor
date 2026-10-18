@@ -16,9 +16,15 @@ import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import android.widget.Spinner
+import android.widget.ArrayAdapter
+import android.widget.AdapterView
+import android.view.View
 import com.example.touchcursor.model.OverlayAction
 import com.example.touchcursor.service.CursorAccessibilityService
 import com.example.touchcursor.settings.SettingsRepository
+import com.example.touchcursor.settings.AppExclusionsDialog
+import com.example.touchcursor.model.ScreenEdge
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -66,6 +72,16 @@ class MainActivity : Activity() {
         slider(content, "Sensitivity", ((repository.sensitivity - 0.25f) * 100).roundToInt(), 0, 375,
             { String.format(Locale.US, "%.2f×", 0.25f + it / 100f) },
             { repository.sensitivity = 0.25f + it / 100f })
+        text(content, "Edge swipe controls", 20f)
+        text(content, "Optionally hide the buttons behind a small edge handle. Swipe inward to show them; tap the handle or swipe outward to hide them and return to normal touch.")
+        button(content, "Configure edge swipe") { configureEdgeSwipe() }
+        text(content, "App exclusions", 20f)
+        val excludedCount = text(content, getString(R.string.excluded_apps_count, repository.excludedPackages.size))
+        button(content, "Choose excluded apps") {
+            AppExclusionsDialog(this, repository) {
+                excludedCount.text = getString(R.string.excluded_apps_count, repository.excludedPackages.size)
+            }.show()
+        }
         text(content, "Floating buttons", 20f)
         text(content, "Configure each control independently. Positions are percentages of the available travel area, so they adapt to rotation. Controls only move when you change their settings.")
         for (action in OverlayAction.entries) {
@@ -73,11 +89,44 @@ class MainActivity : Activity() {
         }
         button(content, "Reset settings to defaults") {
             AlertDialog.Builder(this).setTitle("Reset settings?")
-                .setMessage("Restore sensitivity and all floating button settings?")
+                .setMessage("Restore all settings, including button layout, edge swipe and app exclusions?")
                 .setNegativeButton("Cancel", null)
                 .setPositiveButton("Reset") { _, _ -> repository.reset(); render() }.show()
         }
         updateStatus()
+    }
+
+    private fun configureEdgeSwipe() {
+        var config = repository.edgeReveal()
+        val form = column()
+        form.addView(CheckBox(this).apply {
+            setText(R.string.edge_reveal_enabled)
+            isChecked = config.enabled
+            setOnCheckedChangeListener { _, checked -> config = config.copy(enabled = checked) }
+        })
+        text(form, "Screen edge")
+        form.addView(Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, ScreenEdge.entries.map { it.title })
+            setSelection(config.edge.ordinal)
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                    config = config.copy(edge = ScreenEdge.entries[position])
+                }
+                override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+            }
+        })
+        text(form, "Position runs top to bottom on the left/right edges, and left to right on the top/bottom edges. Length is the active strip along the edge; thickness is its distance into the screen.")
+        slider(form, "Trigger position", (config.position * 100).roundToInt(), 0, 100, { "$it%" },
+            { config = config.copy(position = it / 100f) })
+        slider(form, "Trigger length", config.lengthDp, 48, 240, { "$it dp" }, { config = config.copy(lengthDp = it) })
+        slider(form, "Trigger thickness", config.thicknessDp, 8, 32, { "$it dp" }, { config = config.copy(thicknessDp = it) })
+        AlertDialog.Builder(this).setTitle("Edge swipe")
+            .setView(ScrollView(this).apply { addView(form) })
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Save") { _, _ ->
+                repository.saveEdgeReveal(config)
+                Toast.makeText(this, "Edge swipe settings saved", Toast.LENGTH_SHORT).show()
+            }.show()
     }
 
     private fun configureButton(action: OverlayAction) {

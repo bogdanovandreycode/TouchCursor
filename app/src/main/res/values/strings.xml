@@ -2,6 +2,10 @@
 <resources>
     <string name="app_name">Touch Cursor</string>
     <string name="setting_value">%1$s: %2$s</string>
+    <string name="excluded_apps_count">Excluded apps: %1$d</string>
+    <string name="excluded_apps_description">All controls and cursor input are disabled in selected apps. They return in normal touch mode after you leave.</string>
+    <string name="loading_apps">Loading apps…</string>
+    <string name="edge_reveal_enabled">Reveal buttons with an edge swipe</string>
     <string name="cursor_on_label">ON</string>
     <string name="cursor_off_label">OFF</string>
     <string name="cursor_on_description">Cursor mode on. Activate to return to normal touch.</string>

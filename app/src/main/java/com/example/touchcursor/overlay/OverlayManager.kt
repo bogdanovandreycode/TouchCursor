@@ -24,6 +24,7 @@ import com.example.touchcursor.input.GestureInjector
 import com.example.touchcursor.input.TouchpadGestureDetector
 import com.example.touchcursor.model.OverlayAction
 import com.example.touchcursor.settings.SettingsRepository
+import com.example.touchcursor.model.ScreenEdge
 
 /** Owns every window. All transitions and gesture callbacks run on the main thread. */
 class OverlayManager(private val service: AccessibilityService, private val onAction: (OverlayAction) -> Unit) {
@@ -32,9 +33,21 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
     private val controller = CursorController()
     private val injector = GestureInjector(service)
     private val settings = SettingsRepository(service)
+    private var edgeConfig = settings.edgeReveal()
+    private var controlsExpanded = !edgeConfig.enabled
     private val handler = Handler(Looper.getMainLooper())
     private val refresh = Runnable {
         controller.sensitivity = settings.sensitivity
+        val updated = settings.edgeReveal()
+        if (updated.enabled != edgeConfig.enabled) {
+            controlsExpanded = !updated.enabled
+            cursorMode = false
+            detector.reset()
+            remove(capture)
+            buttons.values.forEach(::remove)
+            remove(edgeHandle)
+        }
+        edgeConfig = updated
         syncWindows()
     }
     private val preferenceListener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
@@ -50,6 +63,7 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
         onTap = { inject(false) }, onLongPress = { inject(true) },
     )
     private val capture = TouchCaptureOverlayView(service, detector)
+    private val edgeHandle = EdgeHandleView(service, ::revealControls, ::hideControls)
     private val buttons = (OverlayAction.entries.filter { it != OverlayAction.MODE } + OverlayAction.MODE).associateWith { action ->
         Button(service).apply {
             text = action.label
@@ -64,6 +78,7 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
             minHeight = 0
             setTextColor(Color.WHITE)
             setOnClickListener {
+                if (destroyed || excluded || suspended || injecting) return@setOnClickListener
                 if (action == OverlayAction.MODE) setCursorMode(!cursorMode)
                 else {
                     performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
@@ -78,6 +93,7 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
     private var injecting = false
     private var destroyed = false
     private var suspended = false
+    private var excluded = false
     private var ready = false
     private var injectionToken = 0
     private var displayGeneration = 0
@@ -91,19 +107,48 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
     fun show() { syncWindows() }
 
     fun setCursorMode(enabled: Boolean) {
-        if (destroyed || cursorMode == enabled) return
+        if (destroyed || excluded || suspended || cursorMode == enabled || (enabled && !controlsExpanded)) return
         cursorMode = enabled
         detector.reset()
         toggle.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
         // Recreate the input channel instead of reusing a channel with stale touchability flags.
         remove(capture)
         buttons.values.forEach(::remove)
+        remove(edgeHandle)
+        syncWindows()
+    }
+
+    fun setExcluded(value: Boolean) {
+        if (excluded == value) return
+        excluded = value
+        cursorMode = false
+        controlsExpanded = !edgeConfig.enabled
+        detector.reset()
+        syncWindows()
+    }
+
+    private fun revealControls() {
+        if (destroyed || excluded || suspended || injecting || controlsExpanded) return
+        controlsExpanded = true
+        remove(edgeHandle)
+        syncWindows()
+    }
+
+    private fun hideControls() {
+        if (!edgeConfig.enabled || !controlsExpanded) return
+        controlsExpanded = false
+        cursorMode = false
+        detector.reset()
+        remove(capture)
+        buttons.values.forEach(::remove)
+        remove(edgeHandle)
         syncWindows()
     }
 
     fun suspend() {
         suspended = true
         cursorMode = false
+        controlsExpanded = !edgeConfig.enabled
         detector.reset()
         syncWindows()
     }
@@ -122,7 +167,7 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
     }
 
     private fun syncWindows() {
-        if (destroyed || suspended) {
+        if (destroyed || suspended || excluded) {
             attached.keys.toList().forEach(::remove)
             return
         }
@@ -153,7 +198,7 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
                 settings.button(action).enabled && !attached.containsKey(button) }) remove(toggle)
         for ((action, button) in buttons) {
             val config = settings.button(action)
-            if (injecting || !config.enabled) {
+            if (injecting || !controlsExpanded || !config.enabled) {
                 remove(button)
                 continue
             }
@@ -182,6 +227,31 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
                 put(capture, params(-1, -1, touchable = false))
             }
         }
+        if (edgeConfig.enabled && !injecting && !bounds.isEmpty) {
+            edgeHandle.configure(edgeConfig.edge, controlsExpanded)
+            val vertical = edgeConfig.edge.isVertical
+            val width = dp(if (vertical) edgeConfig.thicknessDp else edgeConfig.lengthDp).coerceAtMost(bounds.width())
+            val height = dp(if (vertical) edgeConfig.lengthDp else edgeConfig.thicknessDp).coerceAtMost(bounds.height())
+            val added = put(edgeHandle, params(width, height).apply {
+                title = "TouchCursor.Edge"
+                x = when (edgeConfig.edge) {
+                    ScreenEdge.LEFT -> bounds.left
+                    ScreenEdge.RIGHT -> bounds.right - width
+                    else -> bounds.left + ((bounds.width() - width) * edgeConfig.position).toInt()
+                }
+                y = when (edgeConfig.edge) {
+                    ScreenEdge.TOP -> bounds.top
+                    ScreenEdge.BOTTOM -> bounds.bottom - height
+                    else -> bounds.top + ((bounds.height() - height) * edgeConfig.position).toInt()
+                }
+            }.absolute())
+            if (!added) {
+                edgeConfig = edgeConfig.copy(enabled = false)
+                controlsExpanded = true
+                Toast.makeText(service, "Edge handle unavailable; showing controls", Toast.LENGTH_SHORT).show()
+                syncWindows()
+            }
+        } else remove(edgeHandle)
     }
 
     private fun updateBounds() {
@@ -205,7 +275,7 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
     }
 
     private fun inject(longPress: Boolean) {
-        if (destroyed || suspended || injecting || !cursorMode || !ready) return
+        if (destroyed || suspended || excluded || injecting || !cursorMode || !ready) return
         injecting = true
         val token = ++injectionToken
         val displayToken = displayGeneration
@@ -215,7 +285,8 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
         // Removal completes before dispatch, including controls that could cover the arrow tip.
         remove(capture)
         buttons.values.forEach(::remove)
-        if (capture.isAttachedToWindow || buttons.values.any { it.isAttachedToWindow }) {
+        remove(edgeHandle)
+        if (capture.isAttachedToWindow || edgeHandle.isAttachedToWindow || buttons.values.any { it.isAttachedToWindow }) {
             injecting = false
             syncWindows()
             Toast.makeText(service, "Unable to release the touch overlay", Toast.LENGTH_SHORT).show()
@@ -223,7 +294,7 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
         }
         Choreographer.getInstance().postFrameCallback {
             if (destroyed || token != injectionToken) return@postFrameCallback
-            if (suspended || !cursorMode || displayToken != displayGeneration) {
+            if (suspended || excluded || !cursorMode || displayToken != displayGeneration) {
                 injecting = false
                 syncWindows()
                 return@postFrameCallback
