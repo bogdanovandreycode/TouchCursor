@@ -16,6 +16,7 @@ import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
+import android.view.WindowInsets
 import android.widget.Button
 import android.widget.Toast
 import com.example.touchcursor.R
@@ -38,6 +39,7 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
     private val handler = Handler(Looper.getMainLooper())
     private val refresh = Runnable {
         controller.sensitivity = settings.sensitivity
+        cursor.appearance = settings.cursorAppearance()
         val updated = settings.edgeReveal()
         if (updated.enabled != edgeConfig.enabled) {
             controlsExpanded = !updated.enabled
@@ -62,7 +64,11 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
         onMove = { dx, dy -> controller.move(dx, dy); positionCursor() },
         onTap = { inject(false) }, onLongPress = { inject(true) },
     )
-    private val capture = TouchCaptureOverlayView(service, detector)
+    private var systemShortcutBounds: Rect? = null
+    private val capture = TouchCaptureOverlayView(service, detector,
+        { x, y -> systemShortcutBounds?.contains(x.toInt(), y.toInt()) == true },
+        { setCursorMode(false) },
+    )
     private val edgeHandle = EdgeHandleView(service, ::revealControls, ::hideControls)
     private val buttons = (OverlayAction.entries.filter { it != OverlayAction.MODE } + OverlayAction.MODE).associateWith { action ->
         Button(service).apply {
@@ -94,17 +100,27 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
     private var destroyed = false
     private var suspended = false
     private var excluded = false
-    private var ready = false
     private var injectionToken = 0
     private var displayGeneration = 0
+    private var preparationTimeout: Runnable? = null
 
     init {
         capture.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateBounds() }
         controller.sensitivity = settings.sensitivity
+        cursor.appearance = settings.cursorAppearance()
         settings.observe(preferenceListener)
     }
 
     fun show() { syncWindows() }
+
+    fun setSystemShortcutBounds(bounds: Rect?) { systemShortcutBounds = bounds?.let(::Rect) }
+
+    /** System shortcut also works while the edge panel is collapsed or MODE is hidden. */
+    fun toggleCursorMode() {
+        if (destroyed || excluded || suspended || (injecting && !cursorMode)) return
+        if (!cursorMode) controlsExpanded = true
+        setCursorMode(!cursorMode)
+    }
 
     fun setCursorMode(enabled: Boolean) {
         if (destroyed || excluded || suspended || cursorMode == enabled || (enabled && !controlsExpanded)) return
@@ -146,6 +162,7 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
     }
 
     fun suspend() {
+        if (suspended) return
         suspended = true
         cursorMode = false
         controlsExpanded = !edgeConfig.enabled
@@ -154,14 +171,27 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
     }
 
     fun resume() {
+        if (!suspended) return
         suspended = false
         syncWindows()
+        // Reattachment at unchanged bounds does not trigger OnLayoutChangeListener.
+        capture.post { updateBounds() }
+    }
+
+    /** Repair detached windows after an OEM removes an overlay or an addView fails. */
+    fun recoverWindows() {
+        if (destroyed || suspended || excluded || injecting) return
+        val missing = !capture.isAttachedToWindow || (cursorMode && !cursor.isAttachedToWindow) ||
+            (cursorMode && !toggle.isAttachedToWindow) ||
+            (edgeConfig.enabled && !edgeHandle.isAttachedToWindow) ||
+            (controlsExpanded && buttons.any { (action, view) -> settings.button(action).enabled && !view.isAttachedToWindow })
+        if (missing) syncWindows()
     }
 
     fun onDisplayChanged() {
         displayGeneration++
         detector.reset()
-        ready = false
+        syncWindows()
         capture.requestLayout()
         capture.post { updateBounds() }
     }
@@ -173,9 +203,13 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
         }
         toggle.setText(if (cursorMode) R.string.cursor_on_label else R.string.cursor_off_label)
         toggle.contentDescription = service.getString(if (cursorMode) R.string.cursor_on_description else R.string.cursor_off_description)
+        val emergencyExit = cursorMode && !settings.button(OverlayAction.MODE).enabled
+        if (emergencyExit) {
+            toggle.setText(R.string.cursor_exit_label)
+            toggle.setContentDescription(service.getString(R.string.cursor_exit_description))
+        }
         if (!injecting) {
-            val captureParams = params(-1, -1, touchable = cursorMode)
-            captureParams.title = "TouchCursor.Input"
+            val captureParams = captureParams(cursorMode)
             if (!put(capture, captureParams)) {
                 cursorMode = false
                 Toast.makeText(service, "Unable to attach cursor overlay. Re-enable Touch Cursor in Accessibility settings.", Toast.LENGTH_LONG).show()
@@ -188,7 +222,7 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
             else {
                 cursorMode = false
                 toggle.setText(R.string.cursor_off_label)
-                put(capture, params(-1, -1, touchable = false).apply { title = "TouchCursor.Input" })
+                put(capture, captureParams(false))
                 Toast.makeText(service, "Unable to display the cursor", Toast.LENGTH_SHORT).show()
             }
         } else remove(cursor)
@@ -198,7 +232,8 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
                 settings.button(action).enabled && !attached.containsKey(button) }) remove(toggle)
         for ((action, button) in buttons) {
             val config = settings.button(action)
-            if (injecting || !controlsExpanded || !config.enabled) {
+            // A hidden activation button must never remove the only on-screen exit.
+            if (injecting || !controlsExpanded || (!config.enabled && !(action == OverlayAction.MODE && emergencyExit))) {
                 remove(button)
                 continue
             }
@@ -224,7 +259,7 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
             if (!added && action == OverlayAction.MODE) {
                 cursorMode = false
                 remove(cursor)
-                put(capture, params(-1, -1, touchable = false))
+                put(capture, captureParams(false))
             }
         }
         if (edgeConfig.enabled && !injecting && !bounds.isEmpty) {
@@ -261,7 +296,6 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
         val updated = Rect(location[0], location[1], location[0] + capture.width, location[1] + capture.height)
         val changed = bounds != updated
         bounds = updated
-        ready = true
         controller.setBounds(bounds.left.toFloat(), bounds.top.toFloat(), bounds.right.toFloat(), bounds.bottom.toFloat())
         positionCursor()
         if (changed) syncWindows()
@@ -269,18 +303,33 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
 
     private fun positionCursor() {
         val layout = attached[cursor] ?: return
-        layout.x = controller.x.toInt() - dp(3)
-        layout.y = controller.y.toInt() - dp(3)
+        layout.x = (controller.x - cursor.hotspotX).toInt()
+        layout.y = (controller.y - cursor.hotspotY).toInt()
         put(cursor, layout)
     }
 
     private fun inject(longPress: Boolean) {
-        if (destroyed || suspended || excluded || injecting || !cursorMode || !ready) return
+        if (destroyed || suspended || excluded || injecting || !cursorMode) return
+        // Read the current attached surface rather than a cached readiness flag. A reattached
+        // View can keep identical layout bounds and never send an OnLayoutChange callback.
+        if (!capture.isAttachedToWindow || capture.width <= 0 || capture.height <= 0) {
+            setCursorMode(false)
+            return
+        }
+        updateBounds()
         injecting = true
         val token = ++injectionToken
         val displayToken = displayGeneration
         val x = controller.x
         val y = controller.y
+        val removedIds = (listOf(capture, edgeHandle) + buttons.values)
+            .filter { it.isAttachedToWindow }.mapNotNull { view ->
+                val node = view.createAccessibilityNodeInfo()
+                try { node?.windowId?.takeIf { it >= 0 } } finally {
+                    @Suppress("DEPRECATION")
+                    node?.recycle()
+                }
+            }.toSet()
         detector.reset()
         // Removal completes before dispatch, including controls that could cover the arrow tip.
         remove(capture)
@@ -292,27 +341,82 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
             Toast.makeText(service, "Unable to release the touch overlay", Toast.LENGTH_SHORT).show()
             return
         }
-        Choreographer.getInstance().postFrameCallback {
-            if (destroyed || token != injectionToken) return@postFrameCallback
+        preparationTimeout = Runnable {
+            if (!destroyed && token == injectionToken && injecting) {
+                injectionToken++
+                injecting = false
+                cursorMode = false
+                syncWindows()
+                Toast.makeText(service, "Touch overlay did not release; returned to normal touch", Toast.LENGTH_SHORT).show()
+            }
+        }.also { handler.postDelayed(it, 1000) }
+        afterOverlayRemoval(token, removedIds) {
+            preparationTimeout?.let(handler::removeCallbacks)
+            preparationTimeout = null
+            if (destroyed || token != injectionToken) return@afterOverlayRemoval
             if (suspended || excluded || !cursorMode || displayToken != displayGeneration) {
                 injecting = false
                 syncWindows()
-                return@postFrameCallback
+                return@afterOverlayRemoval
             }
             val duration = if (longPress) ViewConfiguration.getLongPressTimeout().toLong() + 150 else 60L
             injector.inject(x, y, duration) { success ->
                 if (!destroyed && token == injectionToken) {
                     injecting = false
                     if (success) cursor.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-                    else Toast.makeText(service, "Touch cancelled or unavailable", Toast.LENGTH_SHORT).show()
+                    else {
+                        // Failed input must release the fullscreen touchpad, not trap the user.
+                        cursorMode = false
+                        detector.reset()
+                        Toast.makeText(service, "Touch unavailable; returned to normal touch", Toast.LENGTH_SHORT).show()
+                    }
                     syncWindows()
                 }
             }
         }
     }
 
-    private fun cursorParams() = params(dp(32), dp(38), touchable = false).absolute().apply {
+    private fun afterOverlayRemoval(token: Int, removedIds: Set<Int>, frames: Int = 2, action: () -> Unit) {
+        Choreographer.getInstance().postFrameCallback {
+            if (destroyed || token != injectionToken) return@postFrameCallback
+            // A first frame callback runs before traversal/SF input transactions are committed.
+            // Also wait for Android's accessibility window snapshot to stop reporting the
+            // removed input windows. The preparation watchdog releases normal touch on timeout.
+            val removed = if (frames > 1) false else try {
+                val windows = service.windows
+                try { windows.none { it.id in removedIds } } finally {
+                    @Suppress("DEPRECATION")
+                    windows.forEach { it.recycle() }
+                }
+            } catch (_: RuntimeException) { false }
+            if (removed) action() else afterOverlayRemoval(token, removedIds, (frames - 1).coerceAtLeast(1), action)
+        }
+    }
+
+    private fun cursorParams() = params(
+        (32f * cursor.appearance.sizeDp / 38f * service.resources.displayMetrics.density + 2 * cursor.paddingPx + 0.5f).toInt(),
+        dp(cursor.appearance.sizeDp) + (2 * cursor.paddingPx + 0.5f).toInt(), touchable = false,
+    ).absolute().apply {
         title = "TouchCursor.Cursor"
+        alpha = cursor.appearance.opacity
+    }
+
+    private fun captureParams(touchable: Boolean): WindowManager.LayoutParams {
+        val layout = if (Build.VERSION.SDK_INT >= 30) {
+            // Accessibility windows can ignore fitInsetsTypes on newer Android. Never let
+            // the input surface cover navigation/status bars or the system shortcut there.
+            val metrics = wm.currentWindowMetrics
+            val insets = metrics.windowInsets.getInsetsIgnoringVisibility(
+                WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout(),
+            )
+            val area = metrics.bounds
+            params((area.width() - insets.left - insets.right).coerceAtLeast(1),
+                (area.height() - insets.top - insets.bottom).coerceAtLeast(1), touchable).absolute().apply {
+                x = area.left + insets.left
+                y = area.top + insets.top
+            }
+        } else params(-1, -1, touchable)
+        return layout.apply { title = "TouchCursor.Input" }
     }
 
     // These offsets are physical display coordinates, independent of text layout direction.
@@ -337,6 +441,7 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
     }
 
     private fun put(view: View, layout: WindowManager.LayoutParams): Boolean = try {
+        // A window is registered before its first traversal marks the View as attached.
         if (attached.containsKey(view)) wm.updateViewLayout(view, layout) else wm.addView(view, layout)
         attached[view] = layout
         true
@@ -359,6 +464,7 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
         injectionToken++
         settings.stopObserving(preferenceListener)
         handler.removeCallbacks(refresh)
+        preparationTimeout?.let(handler::removeCallbacks)
         injector.close()
         detector.reset()
         attached.keys.toList().forEach(::remove)

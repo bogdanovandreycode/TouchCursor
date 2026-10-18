@@ -6,6 +6,8 @@ import com.example.touchcursor.model.OverlayAction
 import com.example.touchcursor.model.OverlayButtonConfig
 import com.example.touchcursor.model.EdgeRevealConfig
 import com.example.touchcursor.model.ScreenEdge
+import com.example.touchcursor.model.CursorAppearance
+import com.example.touchcursor.model.CursorShape
 
 class SettingsRepository(context: Context) {
     private val preferences = context.getSharedPreferences("touch_cursor", Context.MODE_PRIVATE)
@@ -17,6 +19,26 @@ class SettingsRepository(context: Context) {
     var excludedPackages: Set<String>
         get() = preferences.getStringSet("excluded_packages", emptySet())?.toSet() ?: emptySet()
         set(value) { preferences.edit().putStringSet("excluded_packages", value.toSet()).apply() }
+
+    fun cursorAppearance() = CursorAppearance(
+        shape = CursorShape.entries.firstOrNull { it.name == preferences.getString("cursor.shape", "ARROW") } ?: CursorShape.ARROW,
+        sizeDp = preferences.getInt("cursor.size", 38).coerceIn(16, 96),
+        opacity = preferences.getFloat("cursor.opacity", 1f).coerceIn(0.1f, 1f),
+        color = preferences.getInt("cursor.color", -1),
+        outlineColor = preferences.getInt("cursor.outlineColor", 0xFF000000.toInt()),
+        outlineWidthDp = preferences.getInt("cursor.outlineWidth", 2).coerceIn(0, 6),
+    )
+
+    fun saveCursorAppearance(config: CursorAppearance) {
+        preferences.edit()
+            .putString("cursor.shape", config.shape.name)
+            .putInt("cursor.size", config.sizeDp.coerceIn(16, 96))
+            .putFloat("cursor.opacity", config.opacity.coerceIn(0.1f, 1f))
+            .putInt("cursor.color", config.color or 0xFF000000.toInt())
+            .putInt("cursor.outlineColor", config.outlineColor or 0xFF000000.toInt())
+            .putInt("cursor.outlineWidth", config.outlineWidthDp.coerceIn(0, 6))
+            .apply()
+    }
 
     fun edgeReveal() = EdgeRevealConfig(
         enabled = preferences.getBoolean("edge.enabled", false),
@@ -40,7 +62,7 @@ class SettingsRepository(context: Context) {
         val prefix = action.name
         return OverlayButtonConfig(
             action = action,
-            enabled = action == OverlayAction.MODE || preferences.getBoolean("$prefix.enabled", false),
+            enabled = preferences.getBoolean("$prefix.enabled", action == OverlayAction.MODE),
             xNormalized = preferences.getFloat("$prefix.x", 1f).coerceIn(0f, 1f),
             yNormalized = preferences.getFloat("$prefix.y", 0.25f + action.ordinal * 0.14f).coerceIn(0f, 1f),
             widthDp = preferences.getInt("$prefix.width", 64).coerceIn(40, 160),

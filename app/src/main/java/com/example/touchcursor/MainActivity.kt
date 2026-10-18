@@ -19,12 +19,21 @@ import android.widget.Toast
 import android.widget.Spinner
 import android.widget.ArrayAdapter
 import android.widget.AdapterView
+import android.widget.EditText
+import android.widget.FrameLayout
+import android.graphics.Color
+import android.text.Editable
+import android.text.TextWatcher
+import android.text.InputType
+import android.view.Gravity
 import android.view.View
 import com.example.touchcursor.model.OverlayAction
 import com.example.touchcursor.service.CursorAccessibilityService
 import com.example.touchcursor.settings.SettingsRepository
 import com.example.touchcursor.settings.AppExclusionsDialog
 import com.example.touchcursor.model.ScreenEdge
+import com.example.touchcursor.model.CursorShape
+import com.example.touchcursor.overlay.CursorOverlayView
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -67,11 +76,16 @@ class MainActivity : Activity() {
             try { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
             catch (_: RuntimeException) { Toast.makeText(this, "Accessibility settings are unavailable", Toast.LENGTH_LONG).show() }
         }
-        text(content, "Tap the floating arrow button (OFF/ON) to switch modes. Swipe anywhere in the touchpad area to move the arrow. Double-tap to click at its tip. Hold still, then lift to send a long press. Tap the arrow button again for normal touch. System bars remain accessible.")
+        text(content, "Tap the floating arrow button (OFF/ON) to switch modes. Swipe anywhere in the touchpad area to move the arrow. Double-tap to click at its tip. Hold still, then lift to send a long press. Tap the mode/EXIT button for normal touch, or touch with two fingers and lift both to exit. System bars remain accessible.")
         text(content, "Cursor sensitivity", 20f)
         slider(content, "Sensitivity", ((repository.sensitivity - 0.25f) * 100).roundToInt(), 0, 375,
             { String.format(Locale.US, "%.2f×", 0.25f + it / 100f) },
             { repository.sensitivity = 0.25f + it / 100f })
+        button(content, "Configure cursor appearance") { configureCursor() }
+        text(content, "System accessibility shortcut", 20f)
+        text(content, if (Build.VERSION.SDK_INT >= 26)
+            "In Android Accessibility settings, assign the accessibility button/shortcut to Touch Cursor Service. It switches cursor mode on and off. You can hide the floating activation button below. A temporary EXIT button remains available during cursor mode for recovery. You can also touch with two fingers and lift both to exit."
+            else "The system accessibility button requires Android 8.0 or newer. Keep the floating Cursor mode button enabled on this device.")
         text(content, "Edge swipe controls", 20f)
         text(content, "Optionally hide the buttons behind a small edge handle. Swipe inward to show them; tap the handle or swipe outward to hide them and return to normal touch.")
         button(content, "Configure edge swipe") { configureEdgeSwipe() }
@@ -94,6 +108,80 @@ class MainActivity : Activity() {
                 .setPositiveButton("Reset") { _, _ -> repository.reset(); render() }.show()
         }
         updateStatus()
+    }
+
+    private fun configureCursor() {
+        var config = repository.cursorAppearance()
+        val form = column()
+        val preview = CursorOverlayView(this)
+        val previewBox = FrameLayout(this).apply {
+            setBackgroundColor(Color.rgb(135, 145, 155))
+            minimumHeight = (124 * resources.displayMetrics.density).roundToInt()
+        }
+        form.addView(previewBox)
+        previewBox.addView(preview)
+        fun updatePreview() {
+            preview.appearance = config
+            preview.alpha = config.opacity
+            preview.layoutParams = FrameLayout.LayoutParams(
+                ((32f * config.sizeDp / 38f + 6) * resources.displayMetrics.density).roundToInt(),
+                ((config.sizeDp + 6) * resources.displayMetrics.density).roundToInt(), Gravity.CENTER,
+            )
+        }
+        updatePreview()
+        text(form, "Cursor shape")
+        form.addView(Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, CursorShape.entries.map { it.title })
+            setSelection(config.shape.ordinal)
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                    config = config.copy(shape = CursorShape.entries[position]); updatePreview()
+                }
+                override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+            }
+        })
+        slider(form, "Cursor size", config.sizeDp, 16, 96, { "$it dp" },
+            { config = config.copy(sizeDp = it); updatePreview() })
+        slider(form, "Cursor opacity", (config.opacity * 100).roundToInt(), 10, 100, { "$it%" },
+            { config = config.copy(opacity = it / 100f); updatePreview() })
+        fun colorField(label: String, initial: Int, change: (Int) -> Unit): EditText {
+            text(form, label)
+            return EditText(this).apply {
+                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                setSingleLine(true)
+                setText(String.format(Locale.US, "#%06X", initial and 0xFFFFFF))
+                addTextChangedListener(object : TextWatcher {
+                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+                    override fun afterTextChanged(s: Editable?) {
+                        val value = s.toString().trim()
+                        if (value.matches(Regex("#[0-9a-fA-F]{6}"))) {
+                            error = null; change(Color.parseColor(value)); updatePreview()
+                        } else error = "Use #RRGGBB, for example #FFFFFF"
+                    }
+                })
+                form.addView(this)
+            }
+        }
+        val fill = colorField("Cursor color (#RRGGBB)", config.color) { config = config.copy(color = it) }
+        val outline = colorField("Outline color (#RRGGBB)", config.outlineColor) { config = config.copy(outlineColor = it) }
+        slider(form, "Outline width (0 disables outline)", config.outlineWidthDp, 0, 6, { "$it dp" },
+            { config = config.copy(outlineWidthDp = it); updatePreview() })
+        val dialog = AlertDialog.Builder(this).setTitle("Cursor appearance")
+            .setView(ScrollView(this).apply { addView(form) })
+            .setNegativeButton("Cancel", null).setPositiveButton("Save", null).create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val invalid = listOf(fill, outline).firstOrNull { !it.text.toString().trim().matches(Regex("#[0-9a-fA-F]{6}")) }
+                if (invalid != null) { invalid.error = "Use #RRGGBB"; invalid.requestFocus() }
+                else {
+                    repository.saveCursorAppearance(config)
+                    Toast.makeText(this, "Cursor appearance saved", Toast.LENGTH_SHORT).show()
+                    dialog.dismiss()
+                }
+            }
+        }
+        dialog.show()
     }
 
     private fun configureEdgeSwipe() {
@@ -133,11 +221,12 @@ class MainActivity : Activity() {
         var config = repository.button(action)
         val form = column()
         form.addView(CheckBox(this).apply {
-            text = if (action == OverlayAction.MODE) "Always available" else "Show button"
+            setText(R.string.show_button)
             isChecked = config.enabled
-            isEnabled = action != OverlayAction.MODE
             setOnCheckedChangeListener { _, checked -> config = config.copy(enabled = checked) }
         })
+        if (action == OverlayAction.MODE) text(form,
+            "Assign the Android accessibility shortcut before hiding this activation button. A temporary EXIT button is shown during cursor mode so normal touch can always be restored. Reopen this app to show the activation button again.")
         text(form, "Button opacity: 100% is solid; 30% is faint. Applies to the icon, label and background.")
         slider(form, "Button opacity", (config.opacity * 100).roundToInt(), 30, 100, { "$it%" },
             { config = config.copy(opacity = it / 100f) })
@@ -182,6 +271,10 @@ class MainActivity : Activity() {
             CursorAccessibilityService.running -> "Service: connected"
             enabled -> "Service: enabled, waiting for Android to connect"
             else -> "Service: disabled"
+        }
+        if (Build.VERSION.SDK_INT >= 26 && CursorAccessibilityService.running) {
+            status.append(if (CursorAccessibilityService.accessibilityButtonAvailable)
+                "\nSystem navigation accessibility button: available" else "\nSystem navigation accessibility button: unavailable; floating shortcuts may still work")
         }
     }
 

@@ -2,6 +2,8 @@ package com.example.touchcursor;
 
 import android.app.Activity;
 import android.os.Bundle;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.view.MotionEvent;
 import android.widget.Button;
 import android.widget.EditText;
@@ -20,18 +22,23 @@ public class TouchTargetActivity extends Activity {
         Button target = new Button(this);
         TextView touch = new TextView(this);
         touch.setContentDescription("fixture-touch");
+        TextView gesture = new TextView(this);
+        gesture.setContentDescription("fixture-gesture");
+        getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("fixture", "clipboard-sentinel"));
         target.setAllCaps(false);
         target.setContentDescription("fixture-target");
         updateLabel(target);
         target.setOnClickListener(view -> { taps++; updateLabel(target); });
         target.setOnLongClickListener(view -> { holds++; updateLabel(target); return true; });
         target.setOnTouchListener((view, event) -> {
+            gesture.setText("action=" + event.getActionMasked() + "; duration=" + (event.getEventTime() - event.getDownTime()));
             if (event.getActionMasked() == MotionEvent.ACTION_DOWN)
                 touch.setText(event.getRawX() + "," + event.getRawY());
             return false;
         });
         layout.addView(target, new LinearLayout.LayoutParams(-1, 0, 1f));
         layout.addView(touch, new LinearLayout.LayoutParams(-1, -2));
+        layout.addView(gesture, new LinearLayout.LayoutParams(-1, -2));
         EditText field = new EditText(this);
         field.setContentDescription("fixture-edit");
         field.setText("alpha beta");

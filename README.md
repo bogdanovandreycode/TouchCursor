@@ -7,7 +7,7 @@
 Build with JDK 17 or newer and Android SDK 36:
 
 ```powershell
-.\gradlew.bat assembleDebug testDebugUnitTest lint
+.\gradlew.bat assembleDebug jacocoDebugUnitTestCoverageVerification lint
 ```
 
 The standard Gradle wrapper is included. Android Studio's bundled JDK 21 was used for validation. Set the Android SDK path in your untracked `local.properties` (see `local.properties.example`). The debug APK is `app/build/outputs/apk/debug/app-debug.apk` and supports Android 7.0 / API 24 and newer.
@@ -29,13 +29,27 @@ The standard Gradle wrapper is included. Android Studio's bundled JDK 21 was use
 
 The narrow edge handle consumes touches starting inside its configured strip; gestures outside that strip pass through when the panel is collapsed. System status/navigation bars remain accessible, so top/bottom triggers follow the usable content edge. On Android 10+ the handle requests gesture exclusion only for its own bounds, subject to Android's system-navigation limits and OEM behavior. App exclusions follow accessibility application-window focus; overlays and IME windows do not count as switching apps.
 
+### Cursor appearance, wake recovery and system shortcut (0.3.0)
+
+- **Configure cursor appearance** provides exactly three shapes: Arrow, Circle and Crosshair. Set size (16–96 dp), opacity (10–100%), fill and outline colors (`#RRGGBB`), and outline width (0–6 dp; 0 disables it). The dialog previews changes; Save applies and persists them. The arrow clicks at its tip; Circle and Crosshair click at their centers, independently of size or outline.
+- On Android 8.0/API 26 and newer, assign the Android accessibility button/shortcut to **Touch Cursor Service** in system Accessibility settings. Its callback toggles cursor mode, including when the edge controls are collapsed. The app reports whether Android currently makes that button available. Availability and shortcut presentation depend on the device. See the [Android accessibility button callback reference](https://developer.android.com/reference/android/accessibilityservice/AccessibilityButtonController.AccessibilityButtonCallback).
+- **Configure Cursor mode → Show button** can now be disabled to avoid duplicate controls. Enable the system shortcut first. Reopen the app to restore the floating button. Android 7.x users should retain the floating mode button.
+- Screen-off/lock exits cursor mode and removes all overlays. Wake/unlock restores enabled controls in normal mode (or the collapsed handle when edge reveal is enabled). The existing accessibility service reconciles actual power/keyguard state on accessibility events and every two seconds, so missed/early broadcasts cannot leave it suspended indefinitely. Detached windows are reattached; checks use no wake lock. No additional service or permission is required.
+- Android owns the accessibility service lifetime. The app cannot override a user disabling access, force-stop, or an OEM killing/preventing the service. Excluded apps still suppress every Touch Cursor overlay.
+
+### Input recovery and native shortcut fixes (0.3.1)
+
+- Gesture dispatch now waits across frame boundaries and for the removed overlay IDs to disappear from Android's accessibility window snapshot. A single callback before traversal was too early for newer Android input transactions: Android could report success while the touch missed the target. A preparation timeout and the gesture callback watchdog release normal touch on failure. Current capture geometry is checked directly instead of relying on a cached readiness flag.
+- On API 30+, explicit window metrics/insets keep the input surface outside system status/navigation bars and cutouts, including after rotation. Accessibility overlays did not consistently honor automatic inset fitting on the newer test device.
+- The Android floating shortcut can also exit cursor mode when its icon lies underneath the capture surface: the service tracks only its own labeled target's bounds in System UI using public accessibility APIs and routes a tap there to mode exit. The mode button's visibility preference hides the activation button in normal mode; a temporary **EXIT** control remains available during cursor mode. Touch with two fingers, then lift both, to exit without injecting a click.
+
 ### Architecture and privacy
 
 - `CursorAccessibilityService` owns the overlay lifecycle, screen-lock receiver and action controllers. `OverlayManager` owns every `TYPE_ACCESSIBILITY_OVERLAY` window. Windows and pending callbacks are cleaned up when the service disconnects or is destroyed.
 - The transparent input surface is non-touchable in normal mode. Mode changes recreate its input channel to avoid stale touchability flags. The separate arrow is always non-touchable/non-focusable. Window bounds supply usable screen coordinates; button positions scale with the usable area and cursor coordinates clamp after configuration changes.
 - `TouchpadGestureDetector` and `CursorController` are pure Kotlin. Gesture recognition never injects until physical pointer-up. Movement and recognition use Android's configured touch/double-tap slop and timing thresholds.
-- Before injection, all touchable overlay windows are removed synchronously. A frame callback dispatches after removal; `GestureResultCallback` restores the currently requested state on success or cancellation. A generation token rejects stale callbacks, and only one injection can run. A watchdog is only a recovery path for a missing OEM/service callback, not the normal timing mechanism. No sleeping is used to coordinate injection.
-- Local `SharedPreferences` store configuration only. No third-party runtime dependencies, Internet/overlay permissions, text logs, analytics, root, hidden APIs or runtime shell commands are used. JUnit and AndroidX Test dependencies are confined to tests; the integration fixture activity is packaged only in the separate test APK.
+- Before injection, all touchable overlay windows are removed synchronously. Frame callbacks and the public accessibility window snapshot confirm their removal before dispatch; `GestureResultCallback` restores the requested state on success or releases normal touch on failure. A generation token rejects stale callbacks, and only one injection can run. Watchdogs recover missing preparation/gesture callbacks; they are not the normal timing mechanism. No sleeping is used to coordinate injection.
+- Local `SharedPreferences` store configuration only. No third-party runtime dependencies, Internet/overlay permissions, text logs, analytics, root, hidden APIs or runtime shell commands are used. JUnit, Robolectric and AndroidX Test dependencies are confined to tests; the integration fixture activity is packaged only in the separate test APK.
 - Accessibility content access is required for focused-node COPY/PASTE. Interactive-window access detects IME visibility and the foreground application's package for exclusions. Events are limited to window state/set changes, view focus and selection; cursor-window geometry changes are filtered/coalesced when checking the foreground app.
 
 ### Public API limitations
@@ -49,7 +63,11 @@ The narrow edge handle consumes touches starting inside its configured strip; ge
 
 ### Validation
 
-Fourteen local JUnit tests cover cursor bounds/sensitivity, touchpad gestures, edge-swipe directions, cancellation, multi-touch rejection and reset behavior. Six integration tests pass on an Android 7.0 / API 24 emulator, including received touch coordinates, copy/paste, IME hiding, layout persistence/rotation, disconnect during injection, all four edge triggers and app exclusions. Build, lint and runtime results are recorded in [VALIDATION.md](VALIDATION.md).
+The local suite has **148 passing tests** using JUnit and Robolectric. It covers gesture boundaries, settings persistence/validation, gesture dispatch and watchdogs, touch exits, overlay recovery, cursor hotspots, accessibility actions, foreground/shortcut tracking, settings dialogs and service lifecycle. Robolectric defaults to Android 14/API 34; lifecycle tests also exercise Android 7/API 24. Unit coverage is **92.0% of lines and 72.1% of branches**, including all application classes (only generated R/BuildConfig classes are excluded).
+
+Run `testDebugUnitTest` for tests alone, or `jacocoDebugUnitTestCoverageVerification` for tests, HTML/XML coverage reports and the **90% line / 70% branch** coverage gate. The standard `check` task also includes this gate. Reports: `app/build/reports/tests/testDebugUnitTest/index.html` and `app/build/reports/jacoco/jacocoDebugUnitTestReport/html/index.html`. The [Android checks workflow](.github/workflows/android.yml) runs unit tests, the coverage gate, lint and the debug build on pushes and pull requests, and uploads reports; it must be committed/pushed before GitHub can run it.
+
+Unit tests simulate Android APIs and cannot verify delivery through the real system input dispatcher or OEM System UI. The existing device suite remains necessary for these paths: the last runtime run passed 12 integration tests on API 33 and 11 on API 24, including actual received touches, copy/paste, keyboard behavior, rotation, sleep/wake and the native shortcut. Device tests were not rerun for this test-only change. Build, lint and runtime results are recorded in [VALIDATION.md](VALIDATION.md).
 
 ## 1. Цель
 

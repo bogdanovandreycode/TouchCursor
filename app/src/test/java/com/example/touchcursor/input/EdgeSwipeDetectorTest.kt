@@ -10,6 +10,61 @@ class EdgeSwipeDetectorTest {
     private var taps = 0
     private val detector = EdgeSwipeDetector(32f, 8f, { reveals++ }, { hides++ }, { taps++ }, outwardThreshold = 4f)
 
+    @Test fun exactInwardThresholdIsAcceptedButJustBelowItIsNot() {
+        detector.edge = ScreenEdge.LEFT
+        detector.down(0f, 0f)
+        detector.up(31.9f, 0f)
+        assertEquals(0, reveals)
+        detector.down(0f, 0f)
+        detector.up(32f, 0f)
+        assertEquals(1, reveals)
+    }
+
+    @Test fun diagonalSwipeMustBeStrictlyMoreInwardThanTheCrossAxisRatio() {
+        detector.edge = ScreenEdge.LEFT
+        detector.down(0f, 0f)
+        detector.up(60f, 50f)
+        assertEquals(0, reveals)
+        detector.down(0f, 0f)
+        detector.up(61f, 50f)
+        assertEquals(1, reveals)
+    }
+
+    @Test fun outwardDirectionWorksForEveryEdge() {
+        for ((edge, end) in listOf(ScreenEdge.LEFT to (-4f to 0f), ScreenEdge.RIGHT to (4f to 0f),
+            ScreenEdge.TOP to (0f to -4f), ScreenEdge.BOTTOM to (0f to 4f))) {
+            detector.edge = edge
+            detector.down(0f, 0f)
+            detector.up(end.first, end.second)
+        }
+        assertEquals(4, hides)
+        assertEquals(0, taps + reveals)
+    }
+
+    @Test fun duplicateUpAndUpWithoutDownAreIgnored() {
+        detector.up(0f, 0f)
+        detector.down(0f, 0f)
+        detector.up(0f, 0f)
+        detector.up(0f, 0f)
+        assertEquals(1, taps)
+    }
+
+    @Test fun newDownDiscardsMovementFromThePreviousGesture() {
+        detector.down(0f, 0f)
+        detector.move(100f, 100f)
+        detector.down(20f, 20f)
+        detector.up(20f, 20f)
+        assertEquals(1, taps)
+        assertEquals(0, reveals + hides)
+    }
+
+    @Test fun motionExactlyAtTouchSlopCanStillBeATap() {
+        detector.edge = ScreenEdge.RIGHT
+        detector.down(0f, 0f)
+        detector.up(0f, 8f)
+        assertEquals(1, taps)
+    }
+
     @Test fun inwardSwipesWorkOnEachEdgeOnlyOnRelease() {
         for ((edge, end) in listOf(ScreenEdge.LEFT to (140f to 100f), ScreenEdge.RIGHT to (60f to 100f),
             ScreenEdge.TOP to (100f to 140f), ScreenEdge.BOTTOM to (100f to 60f))) {

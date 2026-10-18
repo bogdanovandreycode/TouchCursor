@@ -16,6 +16,84 @@ class TouchpadGestureDetectorTest {
         detector.up(x, y, time + 60)
     }
 
+    @Test fun upAndMoveWithoutDownDoNotInjectOrMove() {
+        detector.up(20f, 30f, 1000)
+        detector.move(100f, 100f)
+        assertEquals(0, taps + holds)
+        assertEquals(0f, movedX + movedY, 0f)
+    }
+
+    @Test fun longPressIsRecognizedExactlyAtTheTimeout() {
+        detector.down(20f, 30f, 100)
+        detector.up(20f, 30f, 600)
+        assertEquals(1, holds)
+        assertEquals(0, taps)
+    }
+
+    @Test fun releasingOneMillisecondBeforeLongPressDoesNotHold() {
+        detector.down(20f, 30f, 100)
+        detector.up(20f, 30f, 599)
+        assertEquals(0, holds)
+    }
+
+    @Test fun exactDoubleTapTimeAndDistanceBoundariesAreAccepted() {
+        tap(0, 100f, 100f)
+        detector.down(180f, 100f, 360)
+        detector.up(180f, 100f, 400)
+        assertEquals(1, taps)
+    }
+
+    @Test fun doubleTapOutsideTimeBoundaryIsNotAccepted() {
+        tap(0)
+        tap(361)
+        assertEquals(0, taps)
+    }
+
+    @Test fun doubleTapOutsideDistanceBoundaryIsNotAccepted() {
+        tap(0, 100f, 100f)
+        tap(100, 181f, 100f)
+        assertEquals(0, taps)
+    }
+
+    @Test fun exactTouchSlopDoesNotTurnAHoldIntoMovement() {
+        detector.down(100f, 100f, 0)
+        detector.up(108f, 100f, 500)
+        assertEquals(1, holds)
+        assertEquals(0f, movedX, 0f)
+    }
+
+    @Test fun movementOnlyOnReleaseStillCancelsClickAndHold() {
+        tap(0)
+        detector.down(300f, 400f, 100)
+        detector.up(320f, 400f, 1000)
+        assertEquals(0, taps + holds)
+        assertEquals(20f, movedX, 0f)
+    }
+
+    @Test fun duplicateUpDoesNotInjectTheSameGestureTwice() {
+        tap(0)
+        tap(100)
+        detector.up(300f, 400f, 180)
+        assertEquals(1, taps)
+    }
+
+    @Test fun cancelledHoldIsIgnoredButNextFreshHoldWorks() {
+        detector.down(100f, 100f, 0)
+        detector.cancel()
+        detector.move(500f, 500f)
+        detector.up(100f, 100f, 800)
+        detector.down(100f, 100f, 1000)
+        detector.up(100f, 100f, 1500)
+        assertEquals(1, holds)
+        assertEquals(0f, movedX + movedY, 0f)
+    }
+
+    @Test fun timeGoingBackwardsCannotCompleteADoubleTap() {
+        tap(1000)
+        tap(500)
+        assertEquals(0, taps)
+    }
+
     @Test fun singleTapDoesNotInjectAndDoubleTapInjectsOnlyOnSecondRelease() {
         tap(0)
         assertEquals(0, taps)

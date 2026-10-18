@@ -1,4 +1,79 @@
-# Touch Cursor 0.2.0 validation
+# Touch Cursor 0.3.1 validation
+
+## Unit regression suite — 2026-10-18
+
+Test-only changes expand the original 14 unit tests to **148 tests in 16 test classes**, with **0 failures/errors/skips**. Production code is unchanged by this update. JUnit 4.13.2, Robolectric 4.17 and JaCoCo 0.8.14 are test/build dependencies only. Robolectric uses API 34 by default; service lifecycle tests also run on API 24 (17 total lifecycle invocations).
+
+| Check | Result |
+| --- | --- |
+| `testDebugUnitTest jacocoDebugUnitTestReport lint assembleDebug` | Passed; 148 tests, 0 lint errors, the same 3 existing version-update warnings |
+| `jacocoDebugUnitTestCoverageVerification` | Passed; enforces 90% line / 70% branch minimums and is included in `check` |
+| Workflow syntax (`actionlint` 1.7.12) | Passed; `check --dry-run` also confirms coverage verification is part of the standard task graph |
+| JaCoCo application line coverage | **1139 / 1238 = 92.0%** |
+| JaCoCo application branch coverage | **536 / 743 = 72.1%** |
+
+Coverage includes every application class; only generated R/BuildConfig classes are excluded. Reports: `app/build/reports/tests/testDebugUnitTest/index.html` and `app/build/reports/jacoco/jacocoDebugUnitTestReport/html/index.html`; XML is alongside HTML in the coverage report directory. Execution log: `app/build/reports/final-unit-validation.log`; gate log: `app/build/reports/coverage-gate.log`.
+
+Covered regressions include double-tap/hold/movement boundaries, cancellation, multi-touch exit on the final pointer release, native shortcut hit testing, settings limits/persistence/isolation, save/cancel/invalid-color dialogs, filtered exclusion selection, COPY/PASTE eligibility, keyboard policy restoration without BACK, foreground/window identity, bounded System UI traversal, injection rejection/cancellation/timeouts/stale callbacks, input-window removal before dispatch, missing window-snapshot recovery, hidden activation-button exit, exclusions, display changes, sleep/wake, service reconnect/unbind and preference/callback cleanup.
+
+The new `.github/workflows/android.yml` configures tests, coverage verification, lint and debug builds for pushes/PRs, with downloadable reports. Action versions are pinned to verified commits; workflow syntax passes actionlint, but it has not been executed on GitHub in this workspace. The rebuilt APK has the same SHA-256 as the previously validated 0.3.1 APK. Unit checks do not replace actual input routing/OEM validation; no emulator or phone tests were rerun in this test-only update. Earlier device validation is preserved below.
+
+## Runtime/input regression validation — before the unit-suite expansion
+
+Validated on 2026-10-18 with JDK 21, AGP 9.4.0, Gradle 9.6.0 and SDK 36.
+
+| Check | Result |
+| --- | --- |
+| `assembleDebug assembleDebugAndroidTest testDebugUnitTest lint` | Passed; 14 unit tests, 0 lint errors, the same 3 existing version-update warnings |
+| Instrumentation on Android 13 / API 33 x86_64 | **12 passed**, including the actual System UI floating accessibility shortcut |
+| Instrumentation on Android 7 / API 24 x86 | **11 passed**; the floating-menu test requires API 31+ and is filtered out |
+| APK signature/metadata | Verified v2 debug signature; version 0.3.1 (4), minSdk 24, targetSdk 36, no requested permissions |
+
+The input regression was reproduced on API 33: gesture recognition requested a tap and Android reported successful dispatch, but the target app did not receive it. Dispatch from the first frame callback could precede completion of overlay-removal input transactions. Waiting across frame boundaries and checking that removed overlay IDs disappear from the accessibility window snapshot restored received taps and long presses. A bounded preparation watchdog and the existing gesture watchdog return to normal touch on failure. Geometry is read from the attached input surface rather than a cached readiness flag.
+
+The newer emulator also exposed an input surface covering the entire display despite automatic inset fitting. Explicit metrics/insets now keep it outside status/navigation bars and cutouts, and configuration changes recompute those dimensions. Rotation and repeated screen-off/unlock tests pass.
+
+The floating-shortcut test uses physical touchscreen events at the actual System UI target: enter with the activation button hidden and the edge panel collapsed, inject a click and long press, exit with the same native icon, re-enter and exit with the temporary EXIT control, then verify that an excluded app cannot enter cursor mode. System UI target bounds are read through public accessibility APIs. A separate two-finger test confirms exit only after both fingers are lifted, with no injected click and normal direct touch restored.
+
+The layout regression changes font scale during an injected long press, then verifies another click after reattachment at unchanged bounds. All three cursor shapes still pass coordinate, size, opacity and persistence checks. The test harness waits for the exact input channel on BLAST devices, not just a registered/drawn window. COPY/PASTE is validated against a known clipboard sentinel instead of depending on toast accessibility events that newer Android versions omit.
+
+Runtime tests were launched with `adb -s <emulator> shell am instrument -w -r com.example.touchcursor.test/androidx.test.runner.AndroidJUnitRunner`, targeting only the emulators. Reports: `app/build/reports/api33-instrumentation.txt` (`OK (12 tests)`) and `app/build/reports/api24-instrumentation-031.txt` (`OK (11 tests)`). Unit/lint reports retain their standard locations. No runtime shell calls or test fixtures are packaged in the delivered APK.
+
+The API 33 emulator used the official AOSP image `android/x86_64-33_r02.zip`, verified against its published SHA-1 before extraction. Its `Pixel_33` launch overrides the broken Google APIs image with `-sysdir %LOCALAPPDATA%\Android\Sdk\system-images\android-33\default\x86_64`.
+
+Deliverable: `app/build/outputs/apk/debug/TouchCursor-0.3.1-debug.apk` (1010455 bytes). SHA-256: `B862B8829084A5B7B725B039A432297FA33C19D10FD4D841C51EF190E0AB74B0`. Install over the previous debug build to retain settings. The standard `app-debug.apk` is identical.
+
+Remaining device boundary: the user's OnePlus / Android 14 has not been physically validated. If its System UI does not expose a labeled shortcut target, the temporary EXIT control and two-finger exit remain available. No app can guarantee survival after force-stop, disabled accessibility access, or OEM service termination.
+
+---
+
+# Touch Cursor 0.3.0 validation (historical)
+
+Validated on 2026-10-18 with Android Studio JDK 21, AGP 9.4.0, Gradle 9.6.0 and Android SDK 36.
+
+| Check | Result |
+| --- | --- |
+| `assembleDebug assembleDebugAndroidTest` | Passed |
+| `testDebugUnitTest` | 14 passed, 0 failures |
+| `lint` | 0 errors; the same 3 existing SDK/Gradle version warnings |
+| `connectedDebugAndroidTest` on API 24 | 9 passed, 0 failures, confirmed in the final XML/HTML reports |
+| Additional wake regression | Passed: click injection still works after unlock |
+| `apksigner verify --verbose` | Passed, APK Signature Scheme v2 |
+| APK metadata | Version 0.3.0 (3), minSdk 24, targetSdk 36; no requested permissions |
+
+The integration suite verifies all three shapes at 64 dp and 40% opacity, preference persistence across service restarts, actual window size/opacity, and click coordinates within 2 px of the target. It also verifies three consecutive sleep/wake/unlock cycles without re-enabling the service, a successful click after unlock, collapsed-edge restoration, hiding/restoring the mode button, and the existing movement/hold, copy/paste, rotation, injection teardown and app-exclusion behavior.
+
+The new system accessibility-button test is filtered out on API 24 using `SdkSuppress(minSdkVersion = 30)`, because its test driver uses Android's global accessibility-button action. The application callback itself supports API 26+. **That callback has not been runtime-tested on a newer emulator or physical phone:** the existing API 33 AVD lacks its kernel/system image, and attempts to download a replacement failed. Its metadata and public SDK API usage compile and pass lint. Device/OEM validation of the reported wake problem is still needed; an app cannot guarantee survival after force-stop or OEM termination of its accessibility service.
+
+An actual settings-dialog UI check selected Crosshair, changed size to 89 dp and opacity to 50%, saved, and confirmed the persisted preferences. The dialog preview was visually inspected; evidence: `app/build/reports/runtime/cursor-appearance-api24.png`.
+
+Final API 24 reports: `app/build/reports/validation-api24/final-suite/index.html` and `app/build/reports/validation-api24/final-results.xml`. Unit and lint reports retain their standard paths under `app/build/reports`.
+
+Deliverable: `app/build/outputs/apk/debug/TouchCursor-0.3.0-debug.apk` (984424 bytes). SHA-256: `F76B9AA99BF342639880831F0A202D28367A935302A566307FBE50A665BE5CFE`. The standard `app-debug.apk` has identical contents. Install over the previous debug build to retain settings.
+
+---
+
+# Touch Cursor 0.2.0 validation (historical)
 
 Validated on 2026-10-17 using Windows, Android Studio's JDK 21.0.8, AGP 9.4.0, Gradle 9.6.0 and Android SDK 36.
 

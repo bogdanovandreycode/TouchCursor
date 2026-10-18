@@ -6,16 +6,21 @@ import android.content.ComponentName
 import android.content.Intent
 import android.graphics.Rect
 import android.os.Bundle
+import android.os.Build
 import android.os.SystemClock
 import android.view.InputDevice
 import android.view.MotionEvent
+import android.view.ViewConfiguration
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import android.view.accessibility.AccessibilityEvent
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.filters.SdkSuppress
 import com.example.touchcursor.model.OverlayAction
 import com.example.touchcursor.model.EdgeRevealConfig
 import com.example.touchcursor.model.ScreenEdge
+import com.example.touchcursor.model.CursorAppearance
+import com.example.touchcursor.model.CursorShape
 import com.example.touchcursor.service.CursorAccessibilityService
 import com.example.touchcursor.settings.SettingsRepository
 import org.junit.After
@@ -29,7 +34,9 @@ class CursorIntegrationTest {
     private val settings = SettingsRepository(instrumentation.targetContext)
     private var previousServices = ""
     private var previousEnabled = "0"
+    private var previousFontScale = "1.0"
     private val component = "com.example.touchcursor/.service.CursorAccessibilityService"
+    private val shortcutComponent = "com.example.touchcursor/com.example.touchcursor.service.CursorAccessibilityService"
 
     @Before fun setup() {
         automation.serviceInfo = automation.serviceInfo.apply {
@@ -37,6 +44,7 @@ class CursorIntegrationTest {
         }
         previousServices = shell("settings get secure enabled_accessibility_services")
         previousEnabled = shell("settings get secure accessibility_enabled")
+        previousFontScale = shell("settings get system font_scale")
         settings.reset()
         settings.sensitivity = 1f
         shell("settings put secure enabled_accessibility_services $component")
@@ -50,6 +58,9 @@ class CursorIntegrationTest {
     }
 
     @After fun cleanup() {
+        shell("input keyevent KEYCODE_WAKEUP")
+        shell("wm dismiss-keyguard")
+        shell("settings put system font_scale ${if (previousFontScale == "null") "1.0" else previousFontScale}")
         shell("settings put system accelerometer_rotation 1")
         shell("settings put system user_rotation 0")
         await { instrumentation.targetContext.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT }
@@ -66,8 +77,8 @@ class CursorIntegrationTest {
         await { window("TouchCursor.Cursor") != null }
         val cursor = window("TouchCursor.Cursor")!!
         val density = instrumentation.targetContext.resources.displayMetrics.density
-        val tipX = cursor.left + 3 * density
-        val tipY = cursor.top + 3 * density
+        val tipX = cursor.left + 6 * density
+        val tipY = cursor.top + 6 * density
         val input = window("TouchCursor.Input")!!
         val fingerX = input.left + input.width() * 0.25f
         val fingerY = input.top + input.height() * 0.7f
@@ -78,7 +89,7 @@ class CursorIntegrationTest {
         SystemClock.sleep(60)
         tap(fingerX, fingerY)
         await { label() == "Taps: 2; holds: 0" }
-        val injectedPoint = requiredNode("fixture-touch").text.toString().split(',').map(String::toFloat)
+        val injectedPoint = receivedPoint()
         assertEquals(target.exactCenterX(), injectedPoint[0], 2f)
         assertEquals(target.exactCenterY(), injectedPoint[1], 2f)
         await { window("TouchCursor.Input") != null }
@@ -123,6 +134,207 @@ class CursorIntegrationTest {
         }
     }
 
+    @Test fun cursorShapesKeepTheClickHotspotAndPersistAppearance() {
+        val density = instrumentation.targetContext.resources.displayMetrics.density
+        val target = nodeBounds("fixture-target")
+        var taps = 0
+        for (shape in CursorShape.entries) {
+            val config = CursorAppearance(shape, 64, 0.4f, 0xFFFF3300.toInt(), 0xFF00FFFF.toInt(), 6)
+            settings.saveCursorAppearance(config)
+            // Restart verifies every saved property, not just the in-process preview.
+            shell("settings put secure enabled_accessibility_services null")
+            await { !CursorAccessibilityService.running }
+            assertEquals(config, SettingsRepository(instrumentation.targetContext).cursorAppearance())
+            shell("settings put secure enabled_accessibility_services $component")
+            await { window("TouchCursor.MODE") != null }
+            tapWindow("TouchCursor.MODE")
+            await { window("TouchCursor.Cursor")?.height() == (70 * density + 0.5f).toInt() }
+            val cursor = window("TouchCursor.Cursor")!!
+            val tipX = cursor.left + (3 + (if (shape == CursorShape.ARROW) 3f else 16f) * 64 / 38f) * density
+            val tipY = cursor.top + (3 + (if (shape == CursorShape.ARROW) 3f else 19f) * 64 / 38f) * density
+            val input = window("TouchCursor.Input")!!
+            val fingerX = input.left + input.width() * 0.25f
+            val fingerY = input.top + input.height() * 0.7f
+            drag(fingerX, fingerY, fingerX + target.centerX() - tipX, fingerY + target.centerY() - tipY)
+            val dump = shell("dumpsys window windows").substringAfter(" u0 TouchCursor.Cursor}:").substringBefore("\n  Window #")
+            assertTrue(dump.contains("alpha=0.4"))
+            tap(fingerX, fingerY)
+            SystemClock.sleep(60)
+            tap(fingerX, fingerY)
+            taps++
+            await { label() == "Taps: $taps; holds: 0" }
+            val point = receivedPoint()
+            assertEquals(target.exactCenterX(), point[0], 2f)
+            assertEquals(target.exactCenterY(), point[1], 2f)
+        }
+    }
+
+    @Test fun screenOffAndUnlockRestoreControlsWithoutReenablingService() {
+        repeat(3) {
+            tapWindow("TouchCursor.MODE")
+            await { window("TouchCursor.Cursor") != null }
+            shell("input keyevent KEYCODE_SLEEP")
+            await { noOverlays() }
+            shell("input keyevent KEYCODE_WAKEUP")
+            shell("wm dismiss-keyguard")
+            await { window("TouchCursor.MODE") != null }
+            assertTrue(CursorAccessibilityService.running)
+            assertNull(window("TouchCursor.Cursor"))
+        }
+        tapWindow("TouchCursor.MODE")
+        await { window("TouchCursor.Cursor") != null }
+        val density = instrumentation.targetContext.resources.displayMetrics.density
+        val target = nodeBounds("fixture-target")
+        val cursor = window("TouchCursor.Cursor")!!
+        val input = window("TouchCursor.Input")!!
+        val fingerX = input.left + input.width() * 0.25f
+        val fingerY = input.top + input.height() * 0.7f
+        drag(fingerX, fingerY, fingerX + target.centerX() - cursor.left - 6 * density,
+            fingerY + target.centerY() - cursor.top - 6 * density)
+        tap(fingerX, fingerY)
+        SystemClock.sleep(60)
+        tap(fingerX, fingerY)
+        await { label() == "Taps: 1; holds: 0" }
+        tapWindow("TouchCursor.MODE")
+        settings.saveEdgeReveal(EdgeRevealConfig(enabled = true))
+        await { window("TouchCursor.Edge") != null && window("TouchCursor.MODE") == null }
+        shell("input keyevent KEYCODE_SLEEP")
+        await { noOverlays() }
+        shell("input keyevent KEYCODE_WAKEUP")
+        shell("wm dismiss-keyguard")
+        await { window("TouchCursor.Edge") != null }
+        assertNull(window("TouchCursor.MODE"))
+    }
+
+    @Test fun modeButtonCanBeHiddenAndRestored() {
+        settings.save(settings.button(OverlayAction.MODE).copy(enabled = false))
+        await { window("TouchCursor.MODE") == null }
+        shell("settings put secure enabled_accessibility_services null")
+        await { !CursorAccessibilityService.running }
+        shell("settings put secure enabled_accessibility_services $component")
+        await { CursorAccessibilityService.running && window("TouchCursor.Input") != null }
+        assertNull(window("TouchCursor.MODE"))
+        settings.save(settings.button(OverlayAction.MODE).copy(enabled = true))
+        await { window("TouchCursor.MODE") != null }
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 31)
+    fun floatingSystemShortcutCanEnterAndExitCapturedInput() {
+        val previousTargets = shell("settings get secure accessibility_button_targets")
+        val previousMode = shell("settings get secure accessibility_button_mode")
+        try {
+            shell("settings put secure accessibility_button_targets $shortcutComponent")
+            shell("settings put secure accessibility_button_mode 1")
+            settings.save(settings.button(OverlayAction.MODE).copy(enabled = false))
+            settings.saveEdgeReveal(EdgeRevealConfig(enabled = true, edge = ScreenEdge.LEFT))
+            await { node("Touch Cursor Service") != null && window("TouchCursor.MODE") == null && window("TouchCursor.Edge") != null }
+            val shortcut = nodeBounds("Touch Cursor Service")
+            tap(shortcut.exactCenterX(), shortcut.exactCenterY())
+            await { window("TouchCursor.Cursor") != null && window("TouchCursor.Input") != null }
+            assertNotNull(window("TouchCursor.MODE"))
+            clickAndHoldAtTarget()
+            tap(shortcut.exactCenterX(), shortcut.exactCenterY())
+            await { window("TouchCursor.Cursor") == null && window("TouchCursor.MODE") == null }
+            val target = nodeBounds("fixture-target")
+            tap(target.exactCenterX(), target.exactCenterY())
+            await { label() == "Taps: 2; holds: 1" }
+            tap(shortcut.exactCenterX(), shortcut.exactCenterY())
+            await { window("TouchCursor.Cursor") != null }
+            tapWindow("TouchCursor.MODE")
+            await { window("TouchCursor.Cursor") == null && window("TouchCursor.MODE") == null }
+            settings.excludedPackages = setOf("com.example.touchcursor.test")
+            await { noOverlays() }
+            tap(shortcut.exactCenterX(), shortcut.exactCenterY())
+            SystemClock.sleep(300)
+            assertTrue(noOverlays())
+        } finally {
+            shell("settings put secure accessibility_button_targets $previousTargets")
+            shell("settings put secure accessibility_button_mode $previousMode")
+        }
+    }
+
+    @Test fun unchangedLayoutDuringInjectionDoesNotDisableLaterClicks() {
+        tapWindow("TouchCursor.MODE")
+        await { window("TouchCursor.Cursor") != null }
+        val finger = moveCursorToTarget()
+        val down = SystemClock.uptimeMillis()
+        event(MotionEvent.ACTION_DOWN, finger.first, finger.second, down)
+        SystemClock.sleep(800)
+        event(MotionEvent.ACTION_UP, finger.first, finger.second, down)
+        await { window("TouchCursor.Input") == null }
+        await { node("fixture-gesture")?.text?.startsWith("action=0;") == true }
+        // Font scaling sends onConfigurationChanged without changing capture geometry.
+        shell("settings put system font_scale 1.15")
+        await { instrumentation.targetContext.resources.configuration.fontScale > 1.1f }
+        await { window("TouchCursor.Input") != null }
+        assertTrue(label()?.contains("holds: 1") == true)
+        val updatedFinger = moveCursorToTarget()
+        tap(updatedFinger.first, updatedFinger.second)
+        SystemClock.sleep(60)
+        tap(updatedFinger.first, updatedFinger.second)
+        await { label() == "Taps: 1; holds: 1" }
+    }
+
+    @Test fun twoFingerExitRestoresDirectTouchWithoutInjecting() {
+        tapWindow("TouchCursor.MODE")
+        await { window("TouchCursor.Cursor") != null }
+        settings.save(settings.button(OverlayAction.MODE).copy(enabled = false))
+        val target = nodeBounds("fixture-target")
+        val down = SystemClock.uptimeMillis()
+        val pointers = Array(2) { index -> MotionEvent.PointerProperties().apply { id = index; toolType = MotionEvent.TOOL_TYPE_FINGER } }
+        val coordinates = Array(2) { index -> MotionEvent.PointerCoords().apply {
+            x = target.centerX() + index * 100f; y = target.centerY().toFloat(); pressure = 1f; size = 1f
+        } }
+        fun multi(action: Int, count: Int) {
+            val event = MotionEvent.obtain(down, SystemClock.uptimeMillis(), action, count, pointers, coordinates,
+                0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0)
+            try { assertTrue(automation.injectInputEvent(event, true)) } finally { event.recycle() }
+        }
+        multi(MotionEvent.ACTION_DOWN, 1)
+        multi(MotionEvent.ACTION_POINTER_DOWN or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT), 2)
+        multi(MotionEvent.ACTION_POINTER_UP or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT), 2)
+        assertNotNull(window("TouchCursor.Cursor"))
+        multi(MotionEvent.ACTION_UP, 1)
+        await { window("TouchCursor.Cursor") == null && window("TouchCursor.MODE") == null }
+        assertEquals("Taps: 0; holds: 0", label())
+        tap(target.centerX().toFloat(), target.centerY().toFloat())
+        await { label() == "Taps: 1; holds: 0" }
+    }
+
+    private fun moveCursorToTarget(): Pair<Float, Float> {
+        val config = settings.cursorAppearance()
+        val density = instrumentation.targetContext.resources.displayMetrics.density
+        val cursor = window("TouchCursor.Cursor")!!
+        val target = nodeBounds("fixture-target")
+        val tipX = cursor.left + (3 + (if (config.shape == CursorShape.ARROW) 3f else 16f) * config.sizeDp / 38f) * density
+        val tipY = cursor.top + (3 + (if (config.shape == CursorShape.ARROW) 3f else 19f) * config.sizeDp / 38f) * density
+        val input = window("TouchCursor.Input")!!
+        val fingerX = input.left + input.width() * 0.25f
+        val fingerY = input.top + input.height() * 0.7f
+        val dx = target.centerX() - tipX
+        val dy = target.centerY() - tipY
+        // A zero-distance "drag" is a tap and would arm the double-tap recognizer.
+        if (kotlin.math.hypot(dx, dy) > ViewConfiguration.get(instrumentation.targetContext).scaledTouchSlop) {
+            drag(fingerX, fingerY, fingerX + dx, fingerY + dy)
+        }
+        return fingerX to fingerY
+    }
+
+    private fun clickAndHoldAtTarget() {
+        val finger = moveCursorToTarget()
+        tap(finger.first, finger.second)
+        SystemClock.sleep(60)
+        tap(finger.first, finger.second)
+        await { label() == "Taps: 1; holds: 0" }
+        await { window("TouchCursor.Input") != null }
+        val down = SystemClock.uptimeMillis()
+        event(MotionEvent.ACTION_DOWN, finger.first, finger.second, down)
+        SystemClock.sleep(800)
+        event(MotionEvent.ACTION_UP, finger.first, finger.second, down)
+        await { label() == "Taps: 1; holds: 1" }
+        await { window("TouchCursor.Input") != null }
+    }
+
     @Test fun copyPasteAndUnsupportedFocusAreSafe() {
         for (action in listOf(OverlayAction.COPY, OverlayAction.PASTE, OverlayAction.KEYBOARD)) {
             settings.save(settings.button(action).copy(enabled = true))
@@ -138,14 +350,8 @@ class CursorIntegrationTest {
             putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, 5)
         }))
         await { node("fixture-edit")?.let { it.textSelectionStart == 0 && it.textSelectionEnd == 5 } == true }
-        val copied = automation.executeAndWaitForEvent(
-            { tapWindow("TouchCursor.COPY") },
-            { event -> event.eventType == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED &&
-                event.packageName?.toString() == instrumentation.targetContext.packageName && event.text.any { it.toString() == "Copied" } },
-            5000,
-        )
-        @Suppress("DEPRECATION")
-        copied.recycle()
+        tapWindow("TouchCursor.COPY")
+        automation.waitForIdle(100, 5000)
         field = requiredNode("fixture-edit")
         assertTrue(field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "")
@@ -269,6 +475,14 @@ class CursorIntegrationTest {
     }
 
     private fun label() = node("fixture-target")?.text?.toString()
+    private fun receivedPoint(): List<Float> {
+        var point: List<Float>? = null
+        await {
+            point = node("fixture-touch")?.text?.toString()?.split(',')?.mapNotNull(String::toFloatOrNull)
+            point?.size == 2
+        }
+        return point!!
+    }
     private fun nodeBounds(description: String) = Rect().also { requiredNode(description).getBoundsInScreen(it) }
 
     private fun requiredNode(description: String): AccessibilityNodeInfo {
@@ -292,19 +506,27 @@ class CursorIntegrationTest {
         val dump = shell("dumpsys window windows")
         val header = Regex("Window #\\d+ Window\\{[^\\n]* ${Regex.escape(title)}\\}:").find(dump) ?: return null
         val block = dump.substring(header.range.last + 1).substringBefore("\n  Window #")
+        // A registered window can still be DRAW_PENDING, with an inactive input channel.
+        if (!block.contains("mDrawState=HAS_DRAWN") || !block.contains("Surface: shown=true")) return null
+        if (Build.VERSION.SDK_INT >= 31 && title != "TouchCursor.Cursor") {
+            // On BLAST devices HAS_DRAWN can precede the input-window transaction. Wait for
+            // this exact channel, not a dying window with the same title, before physical input.
+            val channelName = header.value.substringAfter("Window{").substringBefore(' ') + " " + title
+            val input = shell("dumpsys input").lineSequence().firstOrNull { it.contains("name='$channelName'") }
+                ?: return null
+            if (input.contains("NOT_VISIBLE")) return null
+            val notTouchable = block.substringBefore("Requested w=").contains("NOT_TOUCHABLE")
+            if (input.contains("NOT_TOUCHABLE") != notTouchable) return null
+        }
         val frame = Regex("(?:mFrame=|\\bframe=)\\[(-?\\d+),(-?\\d+)\\]\\[(-?\\d+),(-?\\d+)\\]")
             .find(block) ?: return null
         return frame.groupValues.drop(1).map(String::toInt).let { Rect(it[0], it[1], it[2], it[3]) }
     }
 
     private fun tapWindow(title: String) {
-        await {
-            val dump = shell("dumpsys window windows")
-            val header = Regex("Window #\\d+ Window\\{[^\\n]* ${Regex.escape(title)}\\}:").find(dump)
-            val block = header?.let { dump.substring(it.range.last + 1).substringBefore("\n  Window #") }.orEmpty()
-            block.contains("mDrawState=HAS_DRAWN") && block.contains("Surface: shown=true")
-        }
-        window(title)!!.let { tap(it.exactCenterX(), it.exactCenterY()) }
+        var area: Rect? = null
+        await { area = window(title); area != null }
+        area!!.let { tap(it.exactCenterX(), it.exactCenterY()) }
     }
 
     private fun tap(x: Float, y: Float) {
@@ -346,6 +568,6 @@ class CursorIntegrationTest {
             if (condition()) return
             SystemClock.sleep(50)
         }
-        fail("Condition timed out. Mode: ${window("TouchCursor.MODE")}; input: ${window("TouchCursor.Input")}; config: ${settings.button(OverlayAction.MODE)}; target: ${label()}")
+        fail("Condition timed out. Mode: ${window("TouchCursor.MODE")}; cursor: ${window("TouchCursor.Cursor")}; input: ${window("TouchCursor.Input")}; config: ${settings.button(OverlayAction.MODE)}; target: ${label()}; gesture: ${node("fixture-gesture")?.text}")
     }
 }
