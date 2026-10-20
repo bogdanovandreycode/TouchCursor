@@ -36,7 +36,7 @@ class CursorIntegrationTest {
     private var previousEnabled = "0"
     private var previousFontScale = "1.0"
     private val component = "com.example.touchcursor/.service.CursorAccessibilityService"
-    private val shortcutComponent = "com.example.touchcursor/com.example.touchcursor.CursorShortcutActivity"
+    private val shortcutComponent = "com.example.touchcursor/com.example.touchcursor.service.CursorAccessibilityService"
 
     @Before fun setup() {
         automation.serviceInfo = automation.serviceInfo.apply {
@@ -227,8 +227,8 @@ class CursorIntegrationTest {
             shell("settings put secure accessibility_button_mode 1")
             settings.save(settings.button(OverlayAction.MODE).copy(enabled = false))
             settings.saveEdgeReveal(EdgeRevealConfig(enabled = true, edge = ScreenEdge.LEFT))
-            await { node("Touch Cursor mode") != null && window("TouchCursor.MODE") == null && window("TouchCursor.Edge") != null }
-            val shortcut = nodeBounds("Touch Cursor mode")
+            await { node("Touch Cursor Service") != null && window("TouchCursor.MODE") == null && window("TouchCursor.Edge") != null }
+            val shortcut = nodeBounds("Touch Cursor Service")
             tap(shortcut.exactCenterX(), shortcut.exactCenterY())
             await { window("TouchCursor.Cursor") != null && window("TouchCursor.Input") != null }
             assertNull(window("TouchCursor.MODE"))
@@ -263,9 +263,9 @@ class CursorIntegrationTest {
         try {
             shell("settings put secure accessibility_button_targets $shortcutComponent")
             shell("settings put secure accessibility_button_mode 1")
-            await { node("Touch Cursor mode") != null }
+            await { node("Touch Cursor Service") != null }
             shell("settings put secure accessibility_button_targets null")
-            await { node("Touch Cursor mode") == null }
+            await { node("Touch Cursor Service") == null }
             assertTrue(CursorAccessibilityService.running)
             assertTrue(shell("settings get secure enabled_accessibility_services").contains("CursorAccessibilityService"))
             tapWindow("TouchCursor.MODE")
@@ -330,11 +330,11 @@ class CursorIntegrationTest {
         await { label() == "Taps: 1; holds: 0" }
     }
 
-    private fun moveCursorToTarget(): Pair<Float, Float> {
+    private fun moveCursorToTarget(description: String = "fixture-target"): Pair<Float, Float> {
         val config = settings.cursorAppearance()
         val density = instrumentation.targetContext.resources.displayMetrics.density
         val cursor = window("TouchCursor.Cursor")!!
-        val target = nodeBounds("fixture-target")
+        val target = nodeBounds(description)
         val tipX = cursor.left + (3 + (if (config.shape == CursorShape.ARROW) 3f else 16f) * config.sizeDp / 38f) * density
         val tipY = cursor.top + (3 + (if (config.shape == CursorShape.ARROW) 3f else 19f) * config.sizeDp / 38f) * density
         val input = window("TouchCursor.Input")!!
@@ -347,6 +347,99 @@ class CursorIntegrationTest {
             drag(fingerX, fingerY, fingerX + dx, fingerY + dy)
         }
         return fingerX to fingerY
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 26)
+    fun holdMoveDropsAnItemAndSecondTouchSwipeScrolls() {
+        instrumentation.targetContext.startActivity(Intent().apply {
+            component = ComponentName("com.example.touchcursor.test", DragScrollTargetActivity::class.java.name)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        })
+        await { node("fixture-drop") != null }
+        tapWindow("TouchCursor.MODE")
+        await { window("TouchCursor.Cursor") != null }
+        val finger = moveCursorToTarget()
+        val source = nodeBounds("fixture-target")
+        val destination = nodeBounds("fixture-drop")
+        val dx = destination.exactCenterX() - source.exactCenterX()
+        val down = SystemClock.uptimeMillis()
+        event(MotionEvent.ACTION_DOWN, finger.first, finger.second, down)
+        SystemClock.sleep(800)
+        for (step in 1..12) {
+            event(MotionEvent.ACTION_MOVE, finger.first + dx * step / 12, finger.second, down)
+            SystemClock.sleep(30)
+        }
+        assertEquals("holds=0; drops=0", node("fixture-drag-status")?.text)
+        event(MotionEvent.ACTION_UP, finger.first + dx, finger.second, down)
+        await { node("fixture-drag-status")?.text == "holds=1; drops=1" }
+        await { window("TouchCursor.Input") != null }
+        assertNotNull(window("TouchCursor.Cursor"))
+        scrollAtCursor()
+    }
+
+    @Test fun secondTouchSwipeScrollsOnEverySupportedAndroidVersion() {
+        instrumentation.targetContext.startActivity(Intent().apply {
+            component = ComponentName("com.example.touchcursor.test", DragScrollTargetActivity::class.java.name)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        })
+        await { node("fixture-scroll") != null }
+        tapWindow("TouchCursor.MODE")
+        await { window("TouchCursor.Cursor") != null }
+        scrollAtCursor()
+    }
+
+    private fun scrollAtCursor() {
+        val scrollFinger = moveCursorToTarget("fixture-scroll")
+        tap(scrollFinger.first, scrollFinger.second)
+        SystemClock.sleep(60)
+        val scrollDown = SystemClock.uptimeMillis()
+        val distance = nodeBounds("fixture-scroll").height() * 0.3f
+        event(MotionEvent.ACTION_DOWN, scrollFinger.first, scrollFinger.second, scrollDown)
+        for (step in 1..10) {
+            event(MotionEvent.ACTION_MOVE, scrollFinger.first, scrollFinger.second - distance * step / 10, scrollDown)
+            SystemClock.sleep(25)
+        }
+        event(MotionEvent.ACTION_UP, scrollFinger.first, scrollFinger.second - distance, scrollDown)
+        await { (node("fixture-scroll-offset")?.text?.toString()?.toIntOrNull() ?: 0) > 0 }
+        await { window("TouchCursor.Input") != null }
+        assertNotNull(window("TouchCursor.Cursor"))
+    }
+
+    @Test fun heldMotionScrollsNativeViewBeforeFingerRelease() {
+        instrumentation.targetContext.startActivity(Intent().apply {
+            component = ComponentName("com.example.touchcursor.test", DragScrollTargetActivity::class.java.name)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        })
+        await { node("fixture-scroll") != null }
+        assertLiveScroll("fixture-scroll", "fixture-scroll-offset")
+    }
+
+    @Test fun heldMotionScrollsBrowserPageBeforeFingerRelease() {
+        instrumentation.targetContext.startActivity(Intent().apply {
+            component = ComponentName("com.example.touchcursor.test", BrowserScrollTargetActivity::class.java.name)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        })
+        await { node("fixture-browser-ready")?.text == "ready" }
+        assertLiveScroll("fixture-browser-area", "fixture-browser-offset")
+    }
+
+    private fun assertLiveScroll(area: String, offset: String) {
+        tapWindow("TouchCursor.MODE")
+        await { window("TouchCursor.Cursor") != null }
+        val finger = moveCursorToTarget(area)
+        val cursor = window("TouchCursor.Cursor")
+        val down = SystemClock.uptimeMillis()
+        event(MotionEvent.ACTION_DOWN, finger.first, finger.second, down)
+        SystemClock.sleep(800)
+        val distance = nodeBounds(area).height() * 0.25f
+        event(MotionEvent.ACTION_MOVE, finger.first, finger.second - distance, down)
+        // These assertions run before ACTION_UP: replay after release cannot pass this test.
+        await { (node(offset)?.text?.toString()?.toIntOrNull() ?: 0) > 0 }
+        assertNotNull(window("TouchCursor.Input"))
+        assertEquals(cursor, window("TouchCursor.Cursor"))
+        event(MotionEvent.ACTION_UP, finger.first, finger.second - distance, down)
+        assertNotNull(window("TouchCursor.Input"))
+        assertNotNull(window("TouchCursor.Cursor"))
     }
 
     private fun clickAndHoldAtTarget() {
@@ -597,6 +690,6 @@ class CursorIntegrationTest {
             if (condition()) return
             SystemClock.sleep(50)
         }
-        fail("Condition timed out. Mode: ${window("TouchCursor.MODE")}; cursor: ${window("TouchCursor.Cursor")}; input: ${window("TouchCursor.Input")}; config: ${settings.button(OverlayAction.MODE)}; target: ${label()}; gesture: ${node("fixture-gesture")?.text}")
+        fail("Condition timed out. Mode: ${window("TouchCursor.MODE")}; cursor: ${window("TouchCursor.Cursor")}; input: ${window("TouchCursor.Input")}; config: ${settings.button(OverlayAction.MODE)}; target: ${label()}; gesture: ${node("fixture-gesture")?.text}; drag: ${node("fixture-drag-status")?.text}")
     }
 }

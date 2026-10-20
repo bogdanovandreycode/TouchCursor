@@ -4,5 +4,7 @@
         <activity android:name="com.example.touchcursor.TouchTargetActivity"
             android:exported="true" android:configChanges="fontScale"
             android:windowSoftInputMode="stateAlwaysHidden" />
+        <activity android:name="com.example.touchcursor.DragScrollTargetActivity" android:exported="true" />
+        <activity android:name="com.example.touchcursor.BrowserScrollTargetActivity" android:exported="true" />
     </application>
 </manifest>

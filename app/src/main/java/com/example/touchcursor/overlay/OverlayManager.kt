@@ -6,6 +6,7 @@ import android.content.SharedPreferences
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Rect
+import android.graphics.Path
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Handler
@@ -20,6 +21,7 @@ import android.view.WindowInsets
 import android.widget.Button
 import android.widget.Toast
 import com.example.touchcursor.R
+import com.example.touchcursor.actions.ScrollActionController
 import com.example.touchcursor.input.CursorController
 import com.example.touchcursor.input.GestureInjector
 import com.example.touchcursor.input.TouchpadGestureDetector
@@ -44,6 +46,7 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
         if (updated.enabled != edgeConfig.enabled) {
             controlsExpanded = !updated.enabled
             cursorMode = false
+            injector.cancelPendingHold()
             detector.reset()
             remove(capture)
             buttons.values.forEach(::remove)
@@ -58,11 +61,44 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
     }
     private val cursor = CursorOverlayView(service)
     private val configuration = ViewConfiguration.get(service)
+    private val minimumHoldDuration = ViewConfiguration.getLongPressTimeout().toLong() + 150
+    private val scrollActions = ScrollActionController(service)
+    private var liveScrolling = false
+    private var dragPath: Path? = null
+    private var dragHold = 0L
     private val detector = TouchpadGestureDetector(
         configuration.scaledTouchSlop.toFloat(), configuration.scaledDoubleTapSlop.toFloat(),
         ViewConfiguration.getDoubleTapTimeout().toLong(), ViewConfiguration.getLongPressTimeout().toLong(),
-        onMove = { dx, dy -> controller.move(dx, dy); positionCursor() },
-        onTap = { inject(false) }, onLongPress = { inject(true) },
+        onMove = { dx, dy ->
+            if (liveScrolling) scrollActions.move(dx * controller.sensitivity, dy * controller.sensitivity)
+            else {
+                controller.move(dx, dy)
+                dragPath?.lineTo(controller.x, controller.y)
+                positionCursor()
+            }
+        },
+        onTap = { inject(60) }, onLongPress = { inject(it.coerceAtLeast(minimumHoldDuration)) },
+        onDragStart = { hold ->
+            liveScrolling = scrollActions.begin(controller.x, controller.y)
+            dragHold = if (hold > 0) hold.coerceAtLeast(minimumHoldDuration) else 0
+            dragPath = if (liveScrolling) null else Path().apply { moveTo(controller.x, controller.y) }
+        },
+        onDragEnd = { duration ->
+            scrollActions.end()
+            liveScrolling = false
+            val path = dragPath
+            dragPath = null
+            if (path != null) {
+                if (dragHold > 0 && Build.VERSION.SDK_INT < 26) {
+                    Toast.makeText(service, "Hold and drag requires Android 8 or newer. Double-tap and swipe to scroll.", Toast.LENGTH_LONG).show()
+                } else inject(duration, path, dragHold)
+            }
+        },
+        onDragCancel = {
+            scrollActions.end()
+            liveScrolling = false
+            dragPath = null
+        },
     )
     private var systemShortcutBounds: Rect? = null
     private val capture = TouchCaptureOverlayView(service, detector,
@@ -125,6 +161,7 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
     fun setCursorMode(enabled: Boolean) {
         if (destroyed || excluded || suspended || cursorMode == enabled || (enabled && !controlsExpanded)) return
         cursorMode = enabled
+        if (!enabled) injector.cancelPendingHold()
         detector.reset()
         toggle.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
         // Recreate the input channel instead of reusing a channel with stale touchability flags.
@@ -137,6 +174,7 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
     fun setExcluded(value: Boolean) {
         if (excluded == value) return
         excluded = value
+        injector.cancelPendingHold()
         cursorMode = false
         controlsExpanded = !edgeConfig.enabled
         detector.reset()
@@ -154,6 +192,7 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
         if (!edgeConfig.enabled || !controlsExpanded) return
         controlsExpanded = false
         cursorMode = false
+        injector.cancelPendingHold()
         detector.reset()
         remove(capture)
         buttons.values.forEach(::remove)
@@ -164,6 +203,7 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
     fun suspend() {
         if (suspended) return
         suspended = true
+        injector.cancelPendingHold()
         cursorMode = false
         controlsExpanded = !edgeConfig.enabled
         detector.reset()
@@ -189,6 +229,7 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
 
     fun onDisplayChanged() {
         displayGeneration++
+        injector.cancelPendingHold()
         detector.reset()
         syncWindows()
         capture.requestLayout()
@@ -301,7 +342,7 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
         put(cursor, layout)
     }
 
-    private fun inject(longPress: Boolean) {
+    private fun inject(duration: Long, path: Path? = null, holdDuration: Long = 0) {
         if (destroyed || suspended || excluded || injecting || !cursorMode) return
         // Read the current attached surface rather than a cached readiness flag. A reattached
         // View can keep identical layout bounds and never send an OnLayoutChange callback.
@@ -313,8 +354,7 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
         injecting = true
         val token = ++injectionToken
         val displayToken = displayGeneration
-        val x = controller.x
-        val y = controller.y
+        val gesturePath = path ?: Path().apply { moveTo(controller.x, controller.y) }
         val removedIds = (listOf(capture, edgeHandle) + buttons.values)
             .filter { it.isAttachedToWindow }.mapNotNull { view ->
                 val node = view.createAccessibilityNodeInfo()
@@ -352,8 +392,7 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
                 syncWindows()
                 return@afterOverlayRemoval
             }
-            val duration = if (longPress) ViewConfiguration.getLongPressTimeout().toLong() + 150 else 60L
-            injector.inject(x, y, duration) { success ->
+            injector.injectPath(gesturePath, duration, holdDuration) { success ->
                 if (!destroyed && token == injectionToken) {
                     injecting = false
                     if (success) cursor.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
@@ -459,6 +498,7 @@ class OverlayManager(private val service: AccessibilityService, private val onAc
         handler.removeCallbacks(refresh)
         preparationTimeout?.let(handler::removeCallbacks)
         injector.close()
+        scrollActions.end()
         detector.reset()
         attached.keys.toList().forEach(::remove)
     }

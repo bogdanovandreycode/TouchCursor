@@ -105,7 +105,7 @@ class CursorAccessibilityServiceTest {
         assertNotNull(view("MODE"))
     }
 
-    @Test @Config(sdk = [28], shadows = [com.example.touchcursor.testing.AvailableAccessibilityButtonShadow::class])
+    @Test @Config(sdk = [28, 34], shadows = [com.example.touchcursor.testing.AvailableAccessibilityButtonShadow::class])
     fun legacyAccessibilityButtonTogglesAndRespectsExclusions() {
         connect()
         val button = shadowOf(service.accessibilityButtonController)

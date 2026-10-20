@@ -136,8 +136,7 @@ class CursorAccessibilityService : AccessibilityService() {
     }
 
     private fun registerAccessibilityButton() {
-        // Android 11+ uses the separate shortcut Activity so removing it cannot revoke service access.
-        if (Build.VERSION.SDK_INT < 26 || Build.VERSION.SDK_INT >= 30) return
+        if (Build.VERSION.SDK_INT < 26) return
         accessibilityButtonCallback?.let { accessibilityButtonController.unregisterAccessibilityButtonCallback(it) }
         accessibilityButtonAvailable = accessibilityButtonController.isAccessibilityButtonAvailable
         accessibilityButtonCallback = object : AccessibilityButtonController.AccessibilityButtonCallback() {

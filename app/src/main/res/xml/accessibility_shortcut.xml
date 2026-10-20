@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<accessibility-shortcut-target xmlns:android="http://schemas.android.com/apk/res/android"
-    android:description="@string/accessibility_shortcut_description"
-    android:summary="@string/accessibility_shortcut_summary"
-    android:settingsActivity="com.example.touchcursor.MainActivity" />

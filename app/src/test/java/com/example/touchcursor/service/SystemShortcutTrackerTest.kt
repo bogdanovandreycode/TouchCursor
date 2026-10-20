@@ -22,7 +22,7 @@ class SystemShortcutTrackerTest {
     private val bounds = Rect(20, 80, 70, 140)
     private fun target() = accessibilityNode("com.android.systemui").apply {
         isClickable = true
-        contentDescription = service.getString(R.string.accessibility_shortcut_label)
+        contentDescription = service.getString(R.string.accessibility_service_label)
         setBoundsInScreen(bounds)
     }
     private fun setRoot(root: AccessibilityNodeInfo, type: Int = AccessibilityWindowInfo.TYPE_SYSTEM) {

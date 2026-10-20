@@ -1,4 +1,51 @@
-# Touch Cursor 0.3.2 validation
+# Touch Cursor 0.4.1 validation
+
+## Scroll during physical contact — 2026-10-20
+
+Scrollable pages/lists now use public accessibility scroll actions while the physical touchpad stream stays active. Hold still, then move, or make a quick second-touch swipe. The cursor stays fixed over the selected area. Scroll actions are chosen from the deepest supported node under the cursor in the foreground application; direction, small-motion filtering and throttling are handled locally. Release/cancel and lifecycle resets stop pending actions, and a changed foreground window cannot scroll the previous target.
+
+The prior restriction applies to injected touch playback, not accessibility scroll actions. Scroll distance and animation remain app-controlled, so scrolling can be page-sized rather than pixel-smooth. Unsupported areas retain recorded gesture fallback. This does not provide universal live touch for arbitrary slider/canvas/held-button interactions. No new permission, touch-exploration capability, network function or runtime dependency was added.
+
+| Check | Result |
+| --- | --- |
+| `testDebugUnitTest jacocoDebugUnitTestCoverageVerification lint assembleDebug assembleDebugAndroidTest` | Passed; **183 unit tests**, 0 failures/errors, 0 lint errors; 3 existing version-update warnings |
+| Unit coverage | **1321/1426 lines = 92.6%**, **658/887 branches = 74.2%**; 90%/70% gate passes |
+| Android 13/API 33, Pixel_33 x86_64 | **17 instrumentation tests passed** |
+| Android 7/API 24, TouchCursor_API24 x86 | **14 compatible instrumentation tests passed**; continued hold/drag and two API 31+ shortcut tests are filtered out |
+| Actual live scroll delivery | Both APIs scroll a native ScrollView and an offline HTML page in the installed Chromium WebView **before ACTION_UP**; the capture window stays attached and cursor bounds stay unchanged |
+| APK signature/metadata | Verified v2 debug signature; version 0.4.1 (7), minSdk 24, targetSdk 36, no requested permissions |
+
+Runtime reports: `app/build/reports/api33-instrumentation-041.txt` and `app/build/reports/api24-instrumentation-041.txt`; report headers identify the actual API/AVD, since concurrently launched emulators acquired reversed device IDs. Focused API 24 live-scroll report: `app/build/reports/api24-live-scroll-041.txt`. Unit, coverage and lint reports retain their standard paths.
+
+Deliverable: `app/build/outputs/apk/debug/TouchCursor-0.4.1-debug.apk` (1002209 bytes), identical to `app-debug.apk`. SHA-256: `3E0AC9E02C723F4C69E20AF520D58360DBD10A82AF64EAFDACCE502DACA01FB5`. Install over the previous debug build to preserve preferences. The user's physical OnePlus/Android 14 and standalone Chrome/Firefox apps were not tested; browser rendering was verified using the real WebView component with local HTML and network loads disabled.
+
+---
+
+# Touch Cursor 0.4.0 validation (historical)
+
+## Held gestures and unified accessibility settings — 2026-10-20
+
+The separate shortcut activity and its duplicate settings entry are removed. The single Touch Cursor Service uses the accessibility-button callback on API 26+. Existing service and preference IDs remain unchanged. Android may couple service access and shortcut assignment; this version does not promise independent system switches. After updating from 0.3.2, replace any stale Touch Cursor mode shortcut with Touch Cursor Service.
+
+Hold, move and release records drag/drop; a quick second-touch swipe records scrolling without a hold. Ordinary movement remains cursor-only. Playback begins after physical release, because public gesture dispatch cancels competing physical input. Continued strokes keep the injected pointer down across hold and movement on API 26+. API 24–25 retain scroll and stationary long press. Recorded geometry is replayed at uniform movement speed.
+
+The API 33 regression exposed an immediate completion callback for a stationary continued stroke: its declared hold duration had not elapsed, so chaining movement directly skipped the actual hold. Continuation now waits until the hold deadline. Pending holds are released without movement on teardown, mode changes, exclusion, lock or rotation; watchdogs recover failures. A native-graphics unit test verifies that fully clamped movement retains its actual start coordinate.
+
+| Check | Result |
+| --- | --- |
+| `testDebugUnitTest jacocoDebugUnitTestCoverageVerification lint assembleDebug assembleDebugAndroidTest` | Passed; **169 unit tests**, 0 failures/errors, 0 lint errors; 3 existing version-update warnings |
+| Unit coverage | **1227/1329 lines = 92.3%**, **589/805 branches = 73.2%**; 90%/70% gate passes |
+| Full instrumentation on Android 13/API 33 x86_64 | **15 passed**; actual framework drag/drop and ScrollView scrolling, native shortcut enter/exit, shortcut removal, touch, copy/paste, rotation, lock/wake, exclusions and two-finger exit |
+| Full compatible instrumentation on Android 7/API 24 x86 | **12 passed**, including received ScrollView scrolling; continued hold/drag and the two API 31+ shortcut tests are filtered out |
+| APK signature/metadata | Verified v2 debug signature; version 0.4.0 (6), minSdk 24, targetSdk 36, no requested permissions |
+
+Runtime reports: `app/build/reports/api33-instrumentation-040.txt` and `app/build/reports/api24-instrumentation-040.txt`. Unit, coverage and lint reports retain their standard paths.
+
+Deliverable: `app/build/outputs/apk/debug/TouchCursor-0.4.0-debug.apk` (999005 bytes), identical to `app-debug.apk`. SHA-256: `DFEF9309B522B7213EC8F524406717FCD1E58525DA1334DEF078914C6B65226C`. Install over the previous debug build to preserve preferences. The user's physical OnePlus/Android 14 was not modified or tested. Live dragging during physical contact is not implemented; recorded gestures execute after release.
+
+---
+
+# Touch Cursor 0.3.2 validation (historical)
 
 ## Independent app/system controls — 2026-10-19
 

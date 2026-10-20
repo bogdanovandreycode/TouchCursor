@@ -13,8 +13,4 @@
     <string name="cursor_off_description">Cursor mode off. Activate to control the cursor.</string>
     <string name="accessibility_service_label">Touch Cursor Service</string>
     <string name="accessibility_service_description">Virtual cursor and configurable accessibility overlay controls.</string>
-    <string name="accessibility_shortcut_label">Touch Cursor mode</string>
-    <string name="accessibility_shortcut_description">Switch cursor mode on or off. Enable Touch Cursor Service separately before using this optional shortcut.</string>
-    <string name="accessibility_shortcut_summary">Switch cursor mode</string>
-    <string name="accessibility_shortcut_service_required">Enable Touch Cursor Service in Accessibility settings first.</string>
 </resources>

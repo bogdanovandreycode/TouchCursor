@@ -1,6 +1,6 @@
 package com.example.touchcursor.input
 
-import org.junit.Assert.assertEquals
+import org.junit.Assert.*
 import org.junit.Test
 
 class TouchpadGestureDetectorTest {
@@ -8,8 +8,59 @@ class TouchpadGestureDetectorTest {
     private var holds = 0
     private var movedX = 0f
     private var movedY = 0f
+    private val dragHolds = mutableListOf<Long>()
+    private val dragDurations = mutableListOf<Long>()
+    private var dragCancels = 0
     private val detector = TouchpadGestureDetector(8f, 80f, 300, 500,
-        { dx, dy -> movedX += dx; movedY += dy }, { taps++ }, { holds++ })
+        { dx, dy -> movedX += dx; movedY += dy }, { taps++ }, { holds++ },
+        dragHolds::add, dragDurations::add, { dragCancels++ })
+
+    @Test fun holdThenMoveRecordsDragAndOnlyDispatchesOnRelease() {
+        detector.down(100f, 200f, 0)
+        detector.move(102f, 201f, 300)
+        detector.move(130f, 220f, 700)
+        detector.move(150f, 240f, 800)
+        assertEquals(listOf(700L), dragHolds)
+        assertEquals(emptyList<Long>(), dragDurations)
+        detector.up(160f, 250f, 1000)
+        assertEquals(listOf(300L), dragDurations)
+        assertEquals(60f, movedX, 0f)
+        assertEquals(50f, movedY, 0f)
+        assertEquals(0, taps + holds)
+    }
+
+    @Test fun quickSecondTouchSwipeRecordsScrollWithoutLongPressDelay() {
+        tap(0, 100f, 200f)
+        detector.down(100f, 200f, 100)
+        detector.move(100f, 160f, 140)
+        detector.up(100f, 100f, 340)
+        assertEquals(listOf(0L), dragHolds)
+        assertEquals(listOf(200L), dragDurations)
+        assertEquals(0, taps + holds)
+    }
+
+    @Test fun movementBeforeHoldTimeoutRemainsCursorMotionAfterTimeout() {
+        detector.down(100f, 200f, 0)
+        detector.move(130f, 200f, 100)
+        detector.move(160f, 200f, 700)
+        detector.up(160f, 200f, 900)
+        assertTrue(dragHolds.isEmpty())
+        assertTrue(dragDurations.isEmpty())
+        assertEquals(60f, movedX, 0f)
+    }
+
+    @Test fun cancelAndResetDiscardAnArmedDragWithoutDispatch() {
+        detector.down(100f, 200f, 0)
+        detector.move(130f, 200f, 500)
+        detector.cancel()
+        detector.up(150f, 200f, 1000)
+        detector.down(100f, 200f, 2000)
+        detector.move(130f, 200f, 2500)
+        detector.reset()
+        detector.up(150f, 200f, 3000)
+        assertEquals(2, dragCancels)
+        assertTrue(dragDurations.isEmpty())
+    }
 
     private fun tap(time: Long, x: Float = 300f, y: Float = 400f) {
         detector.down(x, y, time)

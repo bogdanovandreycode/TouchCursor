@@ -45,7 +45,9 @@ class ConfigurableAccessibilityServiceShadow : ShadowAccessibilityService() {
     @Implementation
     public override fun getWindows(): List<AccessibilityWindowInfo> {
         if (failWindowRead) throw IllegalStateException("Windows unavailable")
-        return super.getWindows()
+        // The platform returns fresh window handles; recycling a caller's snapshot must
+        // not destroy the fixture used by the next getWindows() call.
+        return super.getWindows().map { AccessibilityWindowInfo.obtain(it) }
     }
 
     @Implementation(minSdk = 24)

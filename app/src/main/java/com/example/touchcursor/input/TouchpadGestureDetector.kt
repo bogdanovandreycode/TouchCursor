@@ -10,7 +10,10 @@ class TouchpadGestureDetector(
     private val longPressTimeout: Long,
     private val onMove: (Float, Float) -> Unit,
     private val onTap: () -> Unit,
-    private val onLongPress: () -> Unit,
+    private val onLongPress: (Long) -> Unit,
+    private val onDragStart: (Long) -> Unit = {},
+    private val onDragEnd: (Long) -> Unit = {},
+    private val onDragCancel: () -> Unit = {},
 ) {
     private var down = false
     private var cancelled = false
@@ -24,6 +27,8 @@ class TouchpadGestureDetector(
     private var firstX = 0f
     private var firstY = 0f
     private var secondTap = false
+    private var dragging = false
+    private var dragTime = 0L
 
     fun down(x: Float, y: Float, time: Long) {
         secondTap = firstUpTime?.let {
@@ -33,6 +38,7 @@ class TouchpadGestureDetector(
         down = true
         cancelled = false
         moved = false
+        dragging = false
         startX = x
         startY = y
         lastX = x
@@ -40,10 +46,17 @@ class TouchpadGestureDetector(
         downTime = time
     }
 
-    fun move(x: Float, y: Float) {
+    fun move(x: Float, y: Float, time: Long = downTime) {
         if (!down || cancelled) return
         if (!moved && distance(x, y, startX, startY) > touchSlop) {
             moved = true
+            val held = (time - downTime).coerceAtLeast(0)
+            if (secondTap || held >= longPressTimeout) {
+                dragging = true
+                dragTime = time
+                // A quick second-touch swipe scrolls; a stationary hold first enables drag/drop.
+                onDragStart(if (held >= longPressTimeout) held else 0)
+            }
             onMove(x - startX, y - startY)
         } else if (moved) {
             onMove(x - lastX, y - lastY)
@@ -54,11 +67,16 @@ class TouchpadGestureDetector(
 
     fun up(x: Float, y: Float, time: Long) {
         if (!down) return
-        move(x, y)
+        move(x, y, time)
         down = false
-        if (cancelled || moved) return
+        if (cancelled) return
+        if (dragging) {
+            onDragEnd((time - dragTime).coerceAtLeast(1))
+            return
+        }
+        if (moved) return
         when {
-            time - downTime >= longPressTimeout -> onLongPress()
+            time - downTime >= longPressTimeout -> onLongPress(time - downTime)
             secondTap -> onTap()
             else -> {
                 firstUpTime = time
@@ -69,6 +87,8 @@ class TouchpadGestureDetector(
     }
 
     fun cancel() {
+        if (dragging) onDragCancel()
+        dragging = false
         cancelled = true
         firstUpTime = null
         secondTap = false

@@ -23,6 +23,110 @@ class GestureInjectorTest {
 
     @Before fun allowDispatch() { platform.setCanDispatchGestures(true) }
 
+    private fun dragPath() = android.graphics.Path().apply { moveTo(100f, 200f); lineTo(250f, 350f) }
+
+    @Test fun holdThenDragContinuesTheSamePointerBeforeReleasing() {
+        injector.injectPath(dragPath(), 300, 800, results::add)
+        val hold = platform.gesturesDispatched.single()
+        assertTrue(hold.description().getStroke(0).willContinue())
+        assertEquals(800L, hold.description().getStroke(0).duration)
+        hold.callback().onCompleted(hold.description())
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(799))
+        assertEquals(1, platform.gesturesDispatched.size)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(1))
+        assertEquals(2, platform.gesturesDispatched.size)
+        val drag = platform.gesturesDispatched.last()
+        assertFalse(drag.description().getStroke(0).willContinue())
+        assertEquals(300L, drag.description().getStroke(0).duration)
+        val bounds = android.graphics.RectF()
+        drag.description().getStroke(0).path.computeBounds(bounds, true)
+        assertEquals(android.graphics.RectF(100f, 200f, 250f, 350f), bounds)
+        assertTrue(results.isEmpty())
+        hold.callback().onCompleted(hold.description())
+        hold.callback().onCancelled(hold.description())
+        assertEquals(2, platform.gesturesDispatched.size)
+        assertTrue(results.isEmpty())
+        drag.callback().onCompleted(drag.description())
+        assertEquals(listOf(true), results)
+    }
+
+    @Test fun scrollDispatchesMovementWithoutAnInitialHold() {
+        injector.injectPath(dragPath(), 250, 0, results::add)
+        val scroll = platform.gesturesDispatched.single()
+        assertFalse(scroll.description().getStroke(0).willContinue())
+        assertEquals(250L, scroll.description().getStroke(0).duration)
+        scroll.callback().onCompleted(scroll.description())
+        assertEquals(listOf(true), results)
+    }
+
+    @Test @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    fun dragClampedAtScreenEdgeKeepsTheRealHoldCoordinate() {
+        injector.injectPath(android.graphics.Path().apply { moveTo(319f, 479f); lineTo(319f, 479f) }, 200, 800, results::add)
+        val hold = platform.gesturesDispatched.single()
+        val bounds = android.graphics.RectF()
+        hold.description().getStroke(0).path.computeBounds(bounds, true)
+        assertEquals(319f, bounds.left, 0f)
+        assertEquals(479f, bounds.top, 0f)
+        hold.callback().onCompleted(hold.description())
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(800))
+        val end = platform.gesturesDispatched.last()
+        end.callback().onCompleted(end.description())
+        assertEquals(listOf(true), results)
+    }
+
+    @Test fun closingOrLosingCallbackDuringHoldReleasesPointerWithoutMoving() {
+        injector.injectPath(dragPath(), 300, 800, results::add)
+        val hold = platform.gesturesDispatched.single()
+        injector.close()
+        assertEquals(2, platform.gesturesDispatched.size)
+        val release = platform.gesturesDispatched.last().description().getStroke(0)
+        assertFalse(release.willContinue())
+        assertEquals(1L, release.duration)
+        hold.callback().onCompleted(hold.description())
+        assertEquals(2, platform.gesturesDispatched.size)
+        assertTrue(results.isEmpty())
+    }
+
+    @Test fun holdWatchdogReleasesPointerAndReportsFailure() {
+        injector.injectPath(dragPath(), 300, 800, results::add)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(2800))
+        assertEquals(listOf(false), results)
+        assertEquals(2, platform.gesturesDispatched.size)
+        assertEquals(1L, platform.gesturesDispatched.last().description().getStroke(0).duration)
+    }
+
+    @Test fun closeAfterEarlyHoldCallbackCancelsScheduledMovement() {
+        injector.injectPath(dragPath(), 300, 800, results::add)
+        val hold = platform.gesturesDispatched.single()
+        hold.callback().onCompleted(hold.description())
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(400))
+        injector.close()
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(5))
+        assertEquals(2, platform.gesturesDispatched.size)
+        assertEquals(1L, platform.gesturesDispatched.last().description().getStroke(0).duration)
+        assertTrue(results.isEmpty())
+    }
+
+    @Test fun cancellingPendingHoldPreventsMovementAndAllowsTheNextGesture() {
+        injector.injectPath(dragPath(), 300, 800, results::add)
+        val hold = platform.gesturesDispatched.single()
+        hold.callback().onCompleted(hold.description())
+        injector.cancelPendingHold()
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(3))
+        assertEquals(listOf(false), results)
+        assertEquals(2, platform.gesturesDispatched.size)
+        injector.inject(10f, 20f, 60, results::add)
+        assertEquals(3, platform.gesturesDispatched.size)
+    }
+
+    @Test @Config(sdk = [24]) fun android7SupportsScrollButRejectsContinuedHoldDrag() {
+        injector.injectPath(dragPath(), 300, 800, results::add)
+        assertEquals(listOf(false), results)
+        assertTrue(platform.gesturesDispatched.isEmpty())
+        injector.injectPath(dragPath(), 300, 0, results::add)
+        assertEquals(1, platform.gesturesDispatched.size)
+    }
+
     @Test fun dispatchesOneStrokeWithTheRequestedPositionAndDuration() {
         injector.inject(123f, 456f, 650, results::add)
         val gesture = platform.gesturesDispatched.single().description()

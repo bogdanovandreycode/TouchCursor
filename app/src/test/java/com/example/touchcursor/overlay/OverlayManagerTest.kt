@@ -175,6 +175,57 @@ class OverlayManagerTest {
         assertFalse(flag("Input", WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE))
     }
 
+    @Test fun heldMotionInjectsAStationaryHoldThenTheCursorPath() {
+        enter()
+        val input = view("Input")!!
+        input.layout(0, 0, 320, 480)
+        for ((action, time, x) in listOf(
+            Triple(MotionEvent.ACTION_DOWN, 0L, 50f),
+            Triple(MotionEvent.ACTION_MOVE, 800L, 80f),
+            Triple(MotionEvent.ACTION_MOVE, 900L, 130f),
+            Triple(MotionEvent.ACTION_UP, 1100L, 150f),
+        )) {
+            val event = MotionEvent.obtain(0, time, action, x, 200f, 0)
+            try { input.onTouchEvent(event) } finally { event.recycle() }
+        }
+        settle()
+        val hold = platform.gesturesDispatched.single()
+        assertTrue(hold.description().getStroke(0).willContinue())
+        assertEquals(800L, hold.description().getStroke(0).duration)
+        hold.callback().onCompleted(hold.description())
+        settle(800)
+        val movement = platform.gesturesDispatched.last()
+        assertEquals(300L, movement.description().getStroke(0).duration)
+        assertFalse(movement.description().getStroke(0).willContinue())
+        movement.callback().onCompleted(movement.description())
+        settle()
+        assertNotNull(view("Input"))
+        assertNotNull(view("Cursor"))
+    }
+
+    @Test fun exitingModeDuringHeldInjectionReleasesWithoutDragging() {
+        enter()
+        val input = view("Input")!!
+        input.layout(0, 0, 320, 480)
+        for ((action, time, x) in listOf(
+            Triple(MotionEvent.ACTION_DOWN, 0L, 50f),
+            Triple(MotionEvent.ACTION_MOVE, 800L, 80f),
+            Triple(MotionEvent.ACTION_UP, 1000L, 150f),
+        )) {
+            val event = MotionEvent.obtain(0, time, action, x, 200f, 0)
+            try { input.onTouchEvent(event) } finally { event.recycle() }
+        }
+        settle()
+        val hold = platform.gesturesDispatched.single()
+        hold.callback().onCompleted(hold.description())
+        manager.setCursorMode(false)
+        settle(3000)
+        assertEquals(2, platform.gesturesDispatched.size)
+        assertEquals(1L, platform.gesturesDispatched.last().description().getStroke(0).duration)
+        assertNull(view("Cursor"))
+        assertTrue(flag("Input", WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE))
+    }
+
     @Test fun cancelledInjectionReturnsToNormalTouchInsteadOfRecapturingInput() {
         enter()
         requestTap()

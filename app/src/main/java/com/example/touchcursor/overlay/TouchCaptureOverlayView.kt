@@ -34,7 +34,7 @@ class TouchCaptureOverlayView(
             }
             MotionEvent.ACTION_MOVE -> if (event.pointerCount == 1) {
                 if (shortcutRequested && kotlin.math.hypot(event.rawX - shortcutX, event.rawY - shortcutY) > touchSlop) shortcutRequested = false
-                if (!shortcutRequested) detector.move(event.rawX, event.rawY)
+                if (!shortcutRequested) detector.move(event.rawX, event.rawY, event.eventTime)
             }
             MotionEvent.ACTION_UP -> if (exitRequested || (shortcutRequested && isSystemShortcut(event.rawX, event.rawY))) {
                 exitRequested = false
