@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import com.example.touchcursor.service.CursorAccessibilityService
 import org.junit.Assert.*
 import org.junit.Test
@@ -13,7 +14,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [24, 28, 34])
+@Config(sdk = [24, 28, 30, 34])
 class AccessibilityRegistrationTest {
     @Test @Suppress("DEPRECATION") fun onlyServiceIsExposedAndItsSettingsAndGestureCapabilitiesArePreserved() {
         val context = RuntimeEnvironment.getApplication()
@@ -29,8 +30,10 @@ class AccessibilityRegistrationTest {
         info.loadXmlMetaData(pm, "android.accessibilityservice")!!.use {
             while (it.next() != org.xmlpull.v1.XmlPullParser.START_TAG) { /* Root element. */ }
             val ns = "http://schemas.android.com/apk/res/android"
-            assertEquals(AccessibilityServiceInfo.FLAG_REQUEST_ACCESSIBILITY_BUTTON,
+            assertEquals(if (Build.VERSION.SDK_INT < 30) AccessibilityServiceInfo.FLAG_REQUEST_ACCESSIBILITY_BUTTON else 0,
                 it.getAttributeIntValue(ns, "accessibilityFlags", 0) and AccessibilityServiceInfo.FLAG_REQUEST_ACCESSIBILITY_BUTTON)
+            assertEquals(AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS,
+                it.getAttributeIntValue(ns, "accessibilityFlags", 0) and AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS)
             assertTrue(it.getAttributeBooleanValue(ns, "canPerformGestures", false))
             assertTrue(it.getAttributeBooleanValue(ns, "canRetrieveWindowContent", false))
             assertEquals(MainActivity::class.java.name, it.getAttributeValue(ns, "settingsActivity"))

@@ -1,4 +1,29 @@
-# Touch Cursor 0.4.1 validation
+# Touch Cursor 0.4.2 validation
+
+## Independent app controls with one accessibility entry — 2026-10-21
+
+On Android 11/API 30+, the existing service no longer declares `flagRequestAccessibilityButton`. Android therefore exposes service access separately from its optional shortcut in the same Touch Cursor Service page. The manifest still registers one accessibility service and no shortcut-target activity. Android 8–10 retains its existing callback configuration. No gesture/scrolling implementation, preference storage ID, permission or runtime dependency changed.
+
+This follows Android's [Settings classification](https://android.googlesource.com/platform/packages/apps/Settings/+/cf48d5b7e543c3b79ac86d27c405e17f4fcfae2a/src/com/android/settings/accessibility/AccessibilityUtil.java): requesting button callbacks hides the independent service-access switch. Without that flag, the [framework's shortcut handler](https://android.googlesource.com/platform/frameworks/base/+/a21de19/services/accessibility/java/com/android/server/accessibility/AccessibilityManagerService.java) toggles service access. Consequently, on API 30+ the optional system icon starts/stops the service and its overlays; the app's Cursor mode button enters/exits cursor mode. The existing covered-shortcut escape and two-finger exit are preserved. Hiding the app mode button still adds no replacement EXIT control.
+
+| Check | Result |
+| --- | --- |
+| `testDebugUnitTest jacocoDebugUnitTestCoverageVerification lint assembleDebug assembleDebugAndroidTest` | Passed; **183 unit tests**, 0 failures/errors/skips; 0 lint errors and 3 existing version-update warnings |
+| Unit coverage | **1321/1429 lines = 92.4%**, **661/899 branches = 73.5%**; 90%/70% gate passes |
+| Android 13/API 33, Pixel_33 x86_64 | **18 instrumentation tests passed** |
+| Android 7/API 24, TouchCursor_API24 x86 | **14 compatible instrumentation tests passed** |
+| Actual Android Settings shortcut switch | Opened the single service page, verified both access/shortcut switches, disabled the shortcut through its UI, and verified that service access stayed enabled; app controls then delivered actual tap/hold input |
+| System icon plus configured app icons | Physical System UI taps stop/restart the service, restore configured controls and retain button preferences; captured-shortcut exit, hidden mode button and exclusions pass |
+| Existing input behavior | Native ScrollView and offline WebView scroll before finger release; touch, drag/drop, copy/paste, rotation, wake recovery, edge controls and two-finger exit pass |
+| APK signature/metadata | Verified v2 debug signature; version 0.4.2 (8), minSdk 24, targetSdk 36, no requested permissions; packaged API 30+ service flags are `0x40` |
+
+Reports: `app/build/reports/api33-instrumentation-042.txt`, `api24-instrumentation-042.txt`, `api33-settings-042.txt`, and the standard unit/coverage/lint reports. The Settings regression uses the real UI because writing `accessibility_button_targets` directly bypasses Settings' service-disable logic.
+
+Deliverable: `app/build/outputs/apk/debug/TouchCursor-0.4.2-debug.apk` (982052 bytes), identical to `app-debug.apk`. SHA-256: `DE7B5BA81C7C0161B62C9B4723B8E6EB232872BA88643CD3302AE303E0DF8AB2`. Install over the previous debug build to preserve preferences. Enable service access once if Android requests it after the update, then leave its shortcut on or off as desired. The user's physical OnePlus/Android 14 was not modified or tested; OEM Settings labels/layout remain device dependent.
+
+---
+
+# Touch Cursor 0.4.1 validation (historical)
 
 ## Scroll during physical contact — 2026-10-20
 

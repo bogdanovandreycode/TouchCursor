@@ -8,6 +8,7 @@ import android.graphics.Rect
 import android.os.Bundle
 import android.os.Build
 import android.os.SystemClock
+import android.provider.Settings
 import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.ViewConfiguration
@@ -219,36 +220,53 @@ class CursorIntegrationTest {
     }
 
     @Test @SdkSuppress(minSdkVersion = 31)
-    fun floatingSystemShortcutCanEnterAndExitCapturedInput() {
+    fun floatingSystemShortcutTogglesServiceAndCoexistsWithAppControls() {
         val previousTargets = shell("settings get secure accessibility_button_targets")
         val previousMode = shell("settings get secure accessibility_button_mode")
         try {
             shell("settings put secure accessibility_button_targets $shortcutComponent")
             shell("settings put secure accessibility_button_mode 1")
-            settings.save(settings.button(OverlayAction.MODE).copy(enabled = false))
-            settings.saveEdgeReveal(EdgeRevealConfig(enabled = true, edge = ScreenEdge.LEFT))
-            await { node("Touch Cursor Service") != null && window("TouchCursor.MODE") == null && window("TouchCursor.Edge") != null }
+            val savedButton = settings.button(OverlayAction.MODE).copy(widthDp = 80, opacity = 0.65f)
+            settings.save(savedButton)
+            settings.save(settings.button(OverlayAction.COPY).copy(enabled = true))
+            await { node("Touch Cursor Service") != null && window("TouchCursor.MODE") != null && window("TouchCursor.COPY") != null }
             val shortcut = nodeBounds("Touch Cursor Service")
             tap(shortcut.exactCenterX(), shortcut.exactCenterY())
+            await { !CursorAccessibilityService.running && noOverlays() }
+            assertEquals(savedButton, settings.button(OverlayAction.MODE))
+            await { node("Touch Cursor Service") != null }
+            tap(shortcut.exactCenterX(), shortcut.exactCenterY())
+            await { CursorAccessibilityService.running && window("TouchCursor.MODE") != null && window("TouchCursor.COPY") != null }
+            tapWindow("TouchCursor.MODE")
             await { window("TouchCursor.Cursor") != null && window("TouchCursor.Input") != null }
-            assertNull(window("TouchCursor.MODE"))
             clickAndHoldAtTarget()
+            settings.save(savedButton.copy(enabled = false))
+            await { window("TouchCursor.MODE") == null }
+            // Preserve the existing escape when the cursor's capture window covers System UI.
             tap(shortcut.exactCenterX(), shortcut.exactCenterY())
             await { window("TouchCursor.Cursor") == null && window("TouchCursor.MODE") == null }
+            assertTrue(CursorAccessibilityService.running)
             val target = nodeBounds("fixture-target")
             tap(target.exactCenterX(), target.exactCenterY())
             await { label() == "Taps: 2; holds: 1" }
             tap(shortcut.exactCenterX(), shortcut.exactCenterY())
-            await { window("TouchCursor.Cursor") != null }
-            assertNull(window("TouchCursor.MODE"))
-            settings.save(settings.button(OverlayAction.MODE).copy(enabled = true))
+            await { !CursorAccessibilityService.running && noOverlays() }
+            tap(shortcut.exactCenterX(), shortcut.exactCenterY())
+            await { CursorAccessibilityService.running && window("TouchCursor.COPY") != null }
+            assertNull(window("TouchCursor.MODE")); assertNull(window("TouchCursor.Cursor"))
+            settings.save(savedButton)
             await { window("TouchCursor.MODE") != null }
+            tapWindow("TouchCursor.MODE")
+            await { window("TouchCursor.Cursor") != null }
             tapWindow("TouchCursor.MODE")
             await { window("TouchCursor.Cursor") == null }
             settings.excludedPackages = setOf("com.example.touchcursor.test")
             await { noOverlays() }
             tap(shortcut.exactCenterX(), shortcut.exactCenterY())
-            SystemClock.sleep(300)
+            await { !CursorAccessibilityService.running }
+            assertTrue(noOverlays())
+            tap(shortcut.exactCenterX(), shortcut.exactCenterY())
+            await { CursorAccessibilityService.running }
             assertTrue(noOverlays())
         } finally {
             shell("settings put secure accessibility_button_targets $previousTargets")
@@ -276,6 +294,55 @@ class CursorIntegrationTest {
             val target = nodeBounds("fixture-target")
             tap(target.exactCenterX(), target.exactCenterY())
             await { label() == "Taps: 2; holds: 1" }
+        } finally {
+            shell("settings put secure accessibility_button_targets $previousTargets")
+            shell("settings put secure accessibility_button_mode $previousMode")
+        }
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 31) @Suppress("DEPRECATION")
+    fun systemSettingsShortcutSwitchLeavesServiceAccessEnabled() {
+        val previousTargets = shell("settings get secure accessibility_button_targets")
+        val previousMode = shell("settings get secure accessibility_button_mode")
+        fun textNode(text: String) = automation.windows.flatMap {
+            it.root?.findAccessibilityNodeInfosByText(text) ?: emptyList()
+        }.firstOrNull { it.text?.toString() == text }
+        fun settingSwitch(id: String) = automation.windows.flatMap {
+            it.root?.findAccessibilityNodeInfosByViewId(id) ?: emptyList()
+        }.firstOrNull()
+        try {
+            shell("settings put secure accessibility_button_targets $shortcutComponent")
+            shell("settings put secure accessibility_button_mode 1")
+            await { node("Touch Cursor Service") != null }
+            instrumentation.targetContext.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            })
+            await { textNode("Downloaded apps") != null && textNode("Touch Cursor Service") != null }
+            var entry = textNode("Touch Cursor Service")!!
+            while (!entry.isClickable) entry = entry.parent ?: error("Service entry has no clickable parent")
+            assertTrue(entry.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            val accessId = "android:id/switch_widget"
+            val shortcutId = "com.android.settings:id/switchWidget"
+            await { textNode("Use Touch Cursor Service") != null && settingSwitch(shortcutId) != null }
+            assertTrue(settingSwitch(accessId)!!.isChecked)
+            assertTrue(settingSwitch(shortcutId)!!.isChecked)
+            // Exercise Settings itself: writing shortcut_targets directly bypasses its service-disable logic.
+            assertTrue(settingSwitch(shortcutId)!!.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            await { settingSwitch(shortcutId)?.isChecked == false &&
+                shell("settings get secure accessibility_button_targets").let { it.isBlank() || it == "null" } }
+            assertTrue(settingSwitch(accessId)!!.isChecked)
+            assertTrue(CursorAccessibilityService.running)
+            assertTrue(shell("settings get secure enabled_accessibility_services").contains("CursorAccessibilityService"))
+            instrumentation.targetContext.startActivity(Intent().apply {
+                component = ComponentName("com.example.touchcursor.test", TouchTargetActivity::class.java.name)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            })
+            await { window("TouchCursor.MODE") != null && node("fixture-target") != null }
+            tapWindow("TouchCursor.MODE")
+            await { window("TouchCursor.Cursor") != null }
+            clickAndHoldAtTarget()
+            tapWindow("TouchCursor.MODE")
+            await { window("TouchCursor.Cursor") == null }
         } finally {
             shell("settings put secure accessibility_button_targets $previousTargets")
             shell("settings put secure accessibility_button_mode $previousMode")

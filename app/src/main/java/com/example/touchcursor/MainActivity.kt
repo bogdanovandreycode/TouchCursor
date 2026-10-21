@@ -84,7 +84,8 @@ class MainActivity : Activity() {
         button(content, "Configure cursor appearance") { configureCursor() }
         text(content, "System accessibility shortcut", 20f)
         text(content, when {
-            Build.VERSION.SDK_INT >= 26 -> "Use the single Touch Cursor Service entry in Android Accessibility settings for access, app settings and the optional system button. Its accessibility button switches cursor mode on and off while the service is enabled. Android may link shortcut assignment to service access; after changing it, check that the service is still enabled. Keep the app's Cursor mode button enabled until the system button works. Touch with two fingers and lift both to exit."
+            Build.VERSION.SDK_INT >= 30 -> "Enable Touch Cursor Service in Android Accessibility settings. Its system shortcut is optional: the app's floating buttons work with or without it. Use Show button in each button's configuration to choose the app controls. The system shortcut turns the service and its controls on or off; use the app's Cursor mode button to switch cursor mode. If the system icon is covered by cursor input, tapping it first exits cursor mode. Touch with two fingers and lift both to exit. All system options remain in the same Touch Cursor Service entry."
+            Build.VERSION.SDK_INT >= 26 -> "Use the single Touch Cursor Service entry in Android Accessibility settings for access, app settings and the optional system button. Its accessibility button switches cursor mode on and off while the service is enabled. Keep the app's Cursor mode button enabled until the system button works. Touch with two fingers and lift both to exit."
             else -> "The system accessibility button requires Android 8.0 or newer. Keep the floating Cursor mode button enabled on this device."
         })
         text(content, "Edge swipe controls", 20f)
@@ -226,8 +227,11 @@ class MainActivity : Activity() {
             isChecked = config.enabled
             setOnCheckedChangeListener { _, checked -> config = config.copy(enabled = checked) }
         })
-        if (action == OverlayAction.MODE) text(form,
-            "When disabled, this button stays hidden in both modes. Use the Android accessibility shortcut to enter and exit cursor mode, or touch with two fingers and lift both to exit. Reopen this app to show the button again.")
+        if (action == OverlayAction.MODE) text(form, when {
+            Build.VERSION.SDK_INT >= 30 -> "When disabled, this button stays hidden in both modes. Keep it enabled to enter cursor mode: the Android shortcut switches the service on or off. Touch with two fingers and lift both to exit cursor mode. Reopen this app to show the button again."
+            Build.VERSION.SDK_INT >= 26 -> "When disabled, this button stays hidden in both modes. Use the Android accessibility shortcut to enter and exit cursor mode, or touch with two fingers and lift both to exit. Reopen this app to show the button again."
+            else -> "When disabled, this button stays hidden in both modes. Keep it enabled to enter cursor mode on this device. Touch with two fingers and lift both to exit. Reopen this app to show the button again."
+        })
         text(form, "Button opacity: 100% is solid; 30% is faint. Applies to the icon, label and background.")
         slider(form, "Button opacity", (config.opacity * 100).roundToInt(), 30, 100, { "$it%" },
             { config = config.copy(opacity = it / 100f) })
@@ -273,7 +277,7 @@ class MainActivity : Activity() {
             enabled -> "Service: enabled, waiting for Android to connect"
             else -> "Service: disabled"
         }
-        if (Build.VERSION.SDK_INT >= 26 && CursorAccessibilityService.running) {
+        if (Build.VERSION.SDK_INT in 26..29 && CursorAccessibilityService.running) {
             status.append(if (CursorAccessibilityService.accessibilityButtonAvailable)
                 "\nSystem navigation accessibility button: available" else "\nSystem navigation accessibility button: unavailable; floating shortcuts may still work")
         }

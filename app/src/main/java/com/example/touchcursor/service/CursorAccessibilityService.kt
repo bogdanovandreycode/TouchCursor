@@ -136,7 +136,9 @@ class CursorAccessibilityService : AccessibilityService() {
     }
 
     private fun registerAccessibilityButton() {
-        if (Build.VERSION.SDK_INT < 26) return
+        // Android 11+ owns the service's on/off shortcut. Requesting callbacks there
+        // would hide its independent access switch in system Settings.
+        if (Build.VERSION.SDK_INT < 26 || Build.VERSION.SDK_INT >= 30) return
         accessibilityButtonCallback?.let { accessibilityButtonController.unregisterAccessibilityButtonCallback(it) }
         accessibilityButtonAvailable = accessibilityButtonController.isAccessibilityButtonAvailable
         accessibilityButtonCallback = object : AccessibilityButtonController.AccessibilityButtonCallback() {
